@@ -179,17 +179,25 @@ def render_agent_response(response: dict):
     action = resp.get("action", "").lower()
     message = resp.get("message", "")
     
-    # Always display the main message if available
-    if message:
+    # Only display raw message for simple response types, except when we have current_question
+    # For structured responses with current_question, show the structured display instead
+    should_show_raw_message = (action in ["help", "error", "text_response", "unknown_response"] or not action) and "current_question" not in resp
+    
+    if message and should_show_raw_message:
         st.markdown(message)
     
-    # Handle specific actions
-    if action in {"session_exists", "start_session", "category_selected"}:
-        # Display current question if available
-        if "current_question" in resp:
-            current_q = resp["current_question"]
-            
-            # Display main question
+    # Display current question - only for category_selected and session_exists actions
+    if "current_question" in resp and action in ["category_selected", "session_exists"]:
+        current_q = resp["current_question"]
+        
+        # Handle new simplified structure (from tool.py)
+        if "sub_question" in current_q:
+            nist_control = current_q.get("nist_control", "N/A")
+            st.markdown(f"### 📋 Current Question ({nist_control})")
+            st.markdown(current_q["sub_question"])
+        
+        # Handle legacy structure with main_question and sub_questions array
+        elif "main_question" in current_q:
             main_question = current_q.get("main_question")
             nist_control = current_q.get("nist_control", "N/A")
             
@@ -208,6 +216,9 @@ def render_agent_response(response: dict):
                             st.markdown(f"**{i}.** {sub_q_text}")
                     elif isinstance(sq, str):
                         st.markdown(f"**{i}.** {sq}")
+
+    # Handle specific actions
+    if action in {"session_exists", "start_session", "category_selected"}:
         
         # Show progress if available
         progress = resp.get("progress", {})
@@ -252,16 +263,17 @@ def render_agent_response(response: dict):
         if justification:
             st.markdown(f"**Justification:** {justification}")
         
-        # Show next question if available
-        next_question = resp.get("next_question", {})
-        if isinstance(next_question, dict) and next_question.get("sub_question"):
-            st.markdown(f"### ➡️ Next Question")
-            st.markdown(next_question["sub_question"])
-        
-        # Check for audit completion
+        # Check for audit completion first
         if resp.get("completed") or resp.get("status") == "completed":
             st.success("🎉 Audit Completed Successfully!")
             st.session_state.current_step = "completed"
+        else:
+            # Show next question only if present and different from current
+            next_question = resp.get("next_question")
+            if next_question and "sub_question" in next_question:
+                nist_control = next_question.get("nist_control", "N/A")
+                st.markdown(f"### ➡️ Next Question ({nist_control})")
+                st.markdown(next_question["sub_question"])
 
     elif action == "help":
         # Just display the message (already handled above)
@@ -283,17 +295,9 @@ def render_agent_response(response: dict):
         
     else:
         # Fallback for unrecognized actions
-        if not message:
-            # Try to display current question if no message
-            if "current_question" in resp:
-                current_q = resp["current_question"]
-                main_question = current_q.get("main_question")
-                if main_question:
-                    st.markdown(f"**Question:** {main_question}")
-                elif current_q.get("sub_question"):
-                    st.markdown(f"**Question:** {current_q['sub_question']}")
-            else:
-                st.markdown("Response received successfully.")
+        if not message and "current_question" not in resp:
+            # Only show generic message if there's no current question (already displayed above)
+            st.markdown("Response received successfully.")
         
         # Show any session information
         if "session_id" in resp:

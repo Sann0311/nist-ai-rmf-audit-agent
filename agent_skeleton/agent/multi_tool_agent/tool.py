@@ -327,7 +327,7 @@ def submit_evidence(session_id: str, evidence: str) -> Dict[str, Any]:
     
     if next_question:
         result["next_question"] = next_question
-        result["message"] = f"**Evidence Evaluation:**\n\n**Conformity Level:** {evaluation['conformity']}\n\n**Justification:** {evaluation['justification']}\n\n**Next Sub-Question:**\n{next_question['sub_question']}\n\nPlease provide your observation/answer for this question."
+        result["message"] = f"**Evidence Evaluation:**\n\n**Conformity Level:** {evaluation['conformity']}\n\n**Justification:** {evaluation['justification']}"
         result["completed"] = False
     else:
         result["message"] = f"**Evidence Evaluation:**\n\n**Conformity Level:** {evaluation['conformity']}\n\n**Justification:** {evaluation['justification']}\n\n🎉 **Audit Completed!**\n\nYou have successfully completed the NIST AI RMF audit for **{session.category}**.\n\n**Summary:**\n• Total Questions: {session.get_progress()['total']}\n• Observations Recorded: {len(session.observations)}\n• Evidence Evaluations: {len(session.evidence_evaluations)}"
@@ -415,45 +415,6 @@ def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any
                 return submit_evidence(active_session_id, message)
     
     # Default help response
-    return {
-        "action": "help",
-        "message": "I'm here to help you conduct a NIST AI RMF audit. Please select one of the 7 categories to begin:\n\n" +
-                  "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
-                  "\n\nWhich category would you like to audit?"
-    }
-    
-    # No category detected, check for active session continuation
-    active_session_id = user_sessions.get(user_id)
-    if active_session_id and active_session_id in audit_sessions:
-        session = audit_sessions[active_session_id]
-        
-        if session.status == "completed":
-            print(f"DEBUG: Session completed")
-            return {
-                "action": "audit_completed",
-                "message": f"🎉 **Audit Completed!**\n\nYou have successfully completed the NIST AI RMF audit for **{session.category}**."
-            }
-        
-        current_q = session.get_current_question()
-        
-        print(f"DEBUG: Found active session {active_session_id}, state: {session.state}")
-        
-        if current_q:
-            # Check session state to determine what we're waiting for
-            if session.state == "waiting_for_question_answer":
-                print(f"DEBUG: Treating as answer/observation")
-                return submit_answer(active_session_id, message)
-            elif session.state == "waiting_for_evidence":
-                print(f"DEBUG: Treating as evidence submission")
-                return submit_evidence(active_session_id, message)
-        else:
-            print(f"DEBUG: Session completed")
-            return {
-                "action": "audit_completed",
-                "message": f"🎉 **Audit Completed!**\n\nYou have successfully completed the NIST AI RMF audit for **{session.category}**."
-            }
-    
-    # Default response for unrecognized input
     return {
         "action": "help",
         "message": "I'm here to help you conduct a NIST AI RMF audit. Please select one of the 7 categories to begin:\n\n" +
