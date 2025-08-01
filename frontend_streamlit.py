@@ -343,9 +343,9 @@ def main():
         st.markdown("---")
         
         # Debug mode toggle
-        debug_toggle = st.checkbox("🐛 Show Debug Info", value=st.session_state.debug_mode, key="global_debug_toggle")
-        if debug_toggle != st.session_state.debug_mode:
-            st.session_state.debug_mode = debug_toggle
+        #debug_toggle = st.checkbox("🐛 Show Debug Info", value=st.session_state.debug_mode, key="global_debug_toggle")
+        #f debug_toggle != st.session_state.debug_mode:
+         #   st.session_state.debug_mode = debug_toggle
         
         if st.button("🔄 Reset Audit", type="secondary"):
             st.session_state.audit_session_id = None
