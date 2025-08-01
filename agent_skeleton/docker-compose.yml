@@ -1,0 +1,68 @@
+services:
+  agent:
+    build:
+      context: ./agent
+      dockerfile: tool.dockerfile
+    container_name: agent
+    networks:
+      - appnet
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_API_BASE=http://host.docker.internal:11434
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    develop:
+      watch:
+        - action: sync
+          path: ./agent/multi_tool_agent
+          target: /workspace/multi_tool_agent
+          ignore:
+            - .git/
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: backend.dockerfile
+    container_name: backend
+    networks:
+      - appnet
+    ports:
+      - "8001:8001"
+    environment:
+      - AGENT_API_URL=http://agent:8000
+    command: ["./wait-for-it.sh", "agent", "8000", "--", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+    depends_on:
+      agent:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./backend
+          target: /app
+          ignore:
+            - .git/
+
+  frontend:
+    image: python:3.11-slim
+    container_name: frontend
+    working_dir: /app
+    networks:
+      - appnet
+    ports:
+      - "8501:8501"  # Streamlit default port
+    volumes:
+      - ../frontend_streamlit.py:/app/frontend_streamlit.py
+    command: >
+      sh -c "pip install streamlit httpx jmespath && 
+             streamlit run frontend_streamlit.py --server.port=8501 --server.address=0.0.0.0"
+    depends_on:
+      - backend
+
+networks:
+  appnet:
+    driver: bridge

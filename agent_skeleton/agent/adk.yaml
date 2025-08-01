@@ -1,0 +1,6 @@
+# ADK Configuration for NIST AI RMF Audit Agent
+# Using direct agent registration
+agents:
+  nist_ai_rmf_audit_agent:
+    module: multi_tool_agent.agent
+    instance: root_agent
