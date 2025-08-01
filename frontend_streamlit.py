@@ -168,7 +168,7 @@ def render_agent_response(response: dict):
             st.markdown("Response received successfully.")
             # Show raw data in debug mode
             if st.session_state.get('debug_mode', False):
-                with st.expander("🐛 Debug: Non-dict Response", expanded=False):
+                with st.expander("Debug: Non-dict Response", expanded=False):
                     st.code(str(response))
         return
     
