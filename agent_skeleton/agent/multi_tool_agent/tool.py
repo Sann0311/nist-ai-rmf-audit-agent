@@ -354,6 +354,12 @@ def run_tool(action: str, **kwargs) -> Dict[str, Any]:
             return submit_evidence(kwargs.get('session_id'), kwargs.get('evidence'))
         elif action == "process_chat":
             return process_chat_message(kwargs.get('message', ''), kwargs.get('context', {}))
+        elif action == "start_multi_category_audit":
+            return start_multi_category_audit(kwargs.get('categories', []), kwargs.get('user_id', 'default'))
+        elif action == "complete_category_and_next":
+            return complete_category_and_next(kwargs.get('multi_session_id'))
+        elif action == "get_multi_category_status":
+            return get_multi_category_status(kwargs.get('multi_session_id'))
         else:
             return {"error": f"Unknown action: {action}"}
     except Exception as e:
@@ -366,7 +372,37 @@ def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any
     
     print(f"DEBUG: Processing message: '{message}'")
     
-    # SIMPLE DIRECT CATEGORY DETECTION - check if any category name is in the message
+    # Check for multi-category audit request FIRST
+    if any(keyword in message_lower for keyword in ["multi", "multiple", "several", "all categories", "batch"]):
+        detected_categories = []
+        nist_categories = get_nist_categories()
+        
+        # Look for multiple categories mentioned in the message
+        for category in nist_categories:
+            if category.lower() in message_lower:
+                detected_categories.append(category)
+        
+        # If multiple categories detected, start multi-category audit
+        if len(detected_categories) >= 2:
+            print(f"DEBUG: Starting multi-category audit for: {detected_categories}")
+            return start_multi_category_audit(detected_categories, user_id)
+        elif len(detected_categories) == 1:
+            # Only one category detected with multi keyword, ask for clarification
+            return {
+                "action": "clarification_needed",
+                "message": f"I detected you want a multi-category audit, but only found one category: **{detected_categories[0]}**.\n\nPlease specify which additional categories you'd like to include in your multi-category audit from:\n" + 
+                          "\n".join([f"• {cat}" for cat in nist_categories if cat != detected_categories[0]])
+            }
+        elif "multi" in message_lower or "multiple" in message_lower:
+            # Multi requested but no specific categories found
+            return {
+                "action": "help", 
+                "message": "I can help you start a multi-category audit! Please specify which categories you'd like to audit from:\n\n" +
+                          "\n".join([f"• {cat}" for cat in nist_categories]) +
+                          "\n\nFor example: 'I want to audit Privacy-Enhanced, Safe, and Secure & Resilient categories'"
+            }
+    
+    # EXISTING SINGLE CATEGORY DETECTION (unchanged)
     categories = get_nist_categories()
     detected_category = None
     
@@ -401,6 +437,15 @@ def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any
         session = audit_sessions[active_session_id]
         
         if session.status == "completed":
+            # Check if this was part of a multi-category audit
+            for multi_id, multi_session in multi_category_sessions.items():
+                if (multi_session['user_id'] == user_id and 
+                    multi_session['status'] == 'active' and
+                    active_session_id in multi_session['sessions'].values()):
+                    print(f"DEBUG: Category completed, moving to next in multi-audit: {multi_id}")
+                    return complete_category_and_next(multi_id)
+            
+            # Single category audit completed
             return {
                 "action": "audit_completed",
                 "message": f"🎉 **Audit Completed!**\n\nYou have successfully completed the NIST AI RMF audit for **{session.category}**."
@@ -417,9 +462,118 @@ def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any
     # Default help response
     return {
         "action": "help",
-        "message": "I'm here to help you conduct a NIST AI RMF audit. Please select one of the 7 categories to begin:\n\n" +
-                  "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
+        "message": "I'm here to help you conduct NIST AI RMF audits. You can:\n\n" +
+                  "• Select a single category to audit\n" +
+                  "• Start a multi-category audit by saying 'multi-category audit for Privacy-Enhanced and Safe'\n" +
+                  "• Continue an existing audit session\n\n" +
+                  "Available categories:\n" + "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
                   "\n\nWhich category would you like to audit?"
+    }
+
+# Multi-category audit session management
+multi_category_sessions = {}
+
+def start_multi_category_audit(categories: List[str], user_id: str = "default") -> Dict[str, Any]:
+    """Start a multi-category audit session - NEW FUNCTION"""
+    if not categories:
+        return {"error": "No categories provided"}
+    
+    if len(categories) < 2:
+        return {"error": "Multi-category audit requires at least 2 categories"}
+    
+    # Validate categories using existing function
+    valid_categories = get_nist_categories()
+    invalid_categories = [cat for cat in categories if cat not in valid_categories]
+    if invalid_categories:
+        return {"error": f"Invalid categories: {invalid_categories}"}
+    
+    # Create a multi-category session tracker
+    multi_session_id = f"multi_audit_{user_id}_{hashlib.md5('_'.join(categories).encode()).hexdigest()[:8]}"
+    
+    # Store multi-category session info
+    multi_category_sessions[multi_session_id] = {
+        'user_id': user_id,
+        'categories': categories,
+        'current_category_index': 0,
+        'completed_categories': [],
+        'sessions': {},
+        'status': 'active'
+    }
+    
+    # Start first category using existing function
+    first_category = categories[0]
+    result = start_audit_session(first_category, user_id)
+    
+    if 'error' not in result:
+        multi_category_sessions[multi_session_id]['sessions'][first_category] = result['session_id']
+        result['multi_session_id'] = multi_session_id
+        result['total_categories'] = len(categories)
+        result['current_category_index'] = 1
+        result['remaining_categories'] = categories[1:]
+        result['action'] = 'multi_category_started'
+        result['message'] = f"**Multi-Category Audit Started**\n\nTotal categories: {len(categories)}\nCurrent: **{first_category}** (1 of {len(categories)})\n\n{result.get('message', '')}"
+    
+    return result
+
+def complete_category_and_next(multi_session_id: str) -> Dict[str, Any]:
+    """Complete current category and move to next one"""
+    if multi_session_id not in multi_category_sessions:
+        return {"error": "Invalid multi-session ID"}
+    
+    multi_session = multi_category_sessions[multi_session_id]
+    current_index = multi_session['current_category_index']
+    categories = multi_session['categories']
+    
+    # Mark current category as completed
+    if current_index <= len(categories):
+        completed_category = categories[current_index - 1]
+        multi_session['completed_categories'].append(completed_category)
+    
+    # Check if all categories are completed
+    if current_index >= len(categories):
+        multi_session['status'] = 'completed'
+        return {
+            "action": "multi_audit_completed",
+            "message": f"🎉 **Multi-Category Audit Completed!**\n\nCompleted all {len(categories)} categories:\n" + 
+                      "\n".join([f"✅ {cat}" for cat in multi_session['completed_categories']]),
+            "completed_categories": multi_session['completed_categories'],
+            "total_categories": len(categories),
+            "status": "completed"
+        }
+    
+    # Start next category
+    next_category = categories[current_index]
+    user_id = multi_session['user_id']
+    
+    result = start_audit_session(next_category, user_id)
+    
+    if 'error' not in result:
+        multi_session['current_category_index'] = current_index + 1
+        multi_session['sessions'][next_category] = result['session_id']
+        
+        result['multi_session_id'] = multi_session_id
+        result['total_categories'] = len(categories)
+        result['current_category_index'] = current_index + 1
+        result['completed_categories'] = multi_session['completed_categories']
+        result['remaining_categories'] = categories[current_index + 1:]
+        result['action'] = 'next_category_started'
+        result['message'] = f"**Category Completed!** ✅ {multi_session['completed_categories'][-1]}\n\n**Next Category:** **{next_category}** ({current_index + 1} of {len(categories)})\n\n{result.get('message', '')}"
+    
+    return result
+
+def get_multi_category_status(multi_session_id: str) -> Dict[str, Any]:
+    """Get status of multi-category audit"""
+    if multi_session_id not in multi_category_sessions:
+        return {"error": "Invalid multi-session ID"}
+    
+    session = multi_category_sessions[multi_session_id]
+    return {
+        "multi_session_id": multi_session_id,
+        "categories": session['categories'],
+        "current_category_index": session['current_category_index'],
+        "completed_categories": session['completed_categories'],
+        "status": session['status'],
+        "total_categories": len(session['categories'])
     }
 
 # Capabilities for agent introspection
@@ -431,13 +585,16 @@ def get_capabilities() -> Dict[str, Any]:
             "Evidence Evaluation",
             "Conformity Assessment",
             "Audit Progress Tracking",
-            "Multi-session Management"
+            "Multi-session Management",
+            "Multi-Category Sequential Audits"
         ],
         "actions": [
             "get_categories",
             "start_session", 
             "get_current_question",
             "submit_answer",
-            "submit_evidence"
+            "submit_evidence",
+            "start_multi_category_audit",
+            "complete_category_and_next"
         ]
     }

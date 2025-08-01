@@ -193,7 +193,7 @@ def render_agent_response(response: dict):
         # Handle new simplified structure (from tool.py)
         if "sub_question" in current_q:
             nist_control = current_q.get("nist_control", "N/A")
-            st.markdown(f"### 📋 Current Question ({nist_control})")
+            st.markdown(f"### Current Question ({nist_control})")
             st.markdown(current_q["sub_question"])
         
         # Handle legacy structure with main_question and sub_questions array
@@ -202,7 +202,7 @@ def render_agent_response(response: dict):
             nist_control = current_q.get("nist_control", "N/A")
             
             if main_question:
-                st.markdown(f"### 📋 Current Question ({nist_control})")
+                st.markdown(f"### Current Question ({nist_control})")
                 st.markdown(main_question)
             
             # Display sub-questions
@@ -218,7 +218,26 @@ def render_agent_response(response: dict):
                         st.markdown(f"**{i}.** {sq}")
 
     # Handle specific actions
-    if action in {"session_exists", "start_session", "category_selected"}:
+    if action in {"session_exists", "start_session", "category_selected", "multi_category_started", "next_category_started"}:
+        
+        # Show multi-category progress if available
+        if action in {"multi_category_started", "next_category_started"}:
+            total_categories = resp.get("total_categories", 0)
+            current_index = resp.get("current_category_index", 0)
+            completed_categories = resp.get("completed_categories", [])
+            remaining_categories = resp.get("remaining_categories", [])
+            
+            if total_categories > 1:
+                progress_pct = current_index / total_categories
+                st.progress(progress_pct, text=f"Multi-Category Audit: {current_index}/{total_categories} categories")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if completed_categories:
+                        st.success(f"✅ Completed: {', '.join(completed_categories)}")
+                with col2:
+                    if remaining_categories:
+                        st.info(f"📋 Remaining: {', '.join(remaining_categories)}")
         
         # Show progress if available
         progress = resp.get("progress", {})
@@ -235,7 +254,7 @@ def render_agent_response(response: dict):
         # Display baseline evidence
         baseline_evidence = resp.get("baseline_evidence")
         if baseline_evidence:
-            st.markdown("### 📖 Baseline Evidence Requirements")
+            st.markdown("### Baseline Evidence Requirements")
             if isinstance(baseline_evidence, list):
                 for item in baseline_evidence:
                     if isinstance(item, dict):
@@ -257,7 +276,7 @@ def render_agent_response(response: dict):
         justification = evaluation.get("justification")
         
         if conformity:
-            st.markdown(f"### ✅ Conformity Assessment")
+            st.markdown(f"### Conformity Assessment")
             st.markdown(f"**Level:** {conformity}")
             
         if justification:
@@ -279,8 +298,22 @@ def render_agent_response(response: dict):
         # Just display the message (already handled above)
         pass
     
-    elif action == "audit_completed" or resp.get("completed") or resp.get("status") == "completed":
-        st.success("🎉 Audit Completed Successfully!")
+    elif action == "audit_completed" or action == "multi_audit_completed" or resp.get("completed") or resp.get("status") == "completed":
+        if action == "multi_audit_completed":
+            completed_categories = resp.get("completed_categories", [])
+            total_categories = resp.get("total_categories", 0)
+            st.success(f"🎉 Multi-Category Audit Completed!")
+            st.balloons()
+            
+            if completed_categories:
+                st.markdown("### Completed Categories:")
+                for cat in completed_categories:
+                    st.markdown(f"✅ {cat}")
+            
+            st.markdown(f"**Total Categories Audited:** {total_categories}")
+        else:
+            st.success("🎉 Audit Completed Successfully!")
+        
         st.session_state.current_step = "completed"
     
     elif action == "error":
@@ -374,8 +407,12 @@ def main():
             
             I will guide you through a structured security posture assessment based on the 7 NIST AI RMF trustworthy characteristics.
             
-            Please select one of the following categories to begin your audit:
+            **Choose your audit approach:**
             
+            🔹 **Single Category Audit** - Focus on one specific category
+            🔹 **Multi-Category Audit** - Audit multiple categories sequentially
+            
+            **Available Categories:**
             1. **Privacy-Enhanced** - Data protection and privacy measures
             2. **Valid & Reliable** - Model accuracy and performance validation  
             3. **Safe** - Safety measures and risk mitigation
@@ -383,15 +420,23 @@ def main():
             5. **Accountable & Transparent** - Governance and transparency
             6. **Explainable and Interpretable** - Model interpretability
             7. **Fair – With Harmful Bias Managed** - Bias mitigation and fairness
-            
-            Which category would you like to audit?
             """)
             st.rerun()
 
-        # Category selection buttons
-        st.subheader("Select Category to Audit")
-        col1, col2 = st.columns(2)
+        # Initialize multi-category session state variables
+        if 'selected_categories' not in st.session_state:
+            st.session_state.selected_categories = []
+        if 'multi_category_mode' not in st.session_state:
+            st.session_state.multi_category_mode = False
+            
+        # Multi-category selection section
+        st.subheader("Multi-Category Audit")
+        st.info("Select multiple categories for sequential auditing")
 
+        # Multi-category selection with checkboxes
+        selected_categories = []
+        col1, col2 = st.columns(2)
+        
         categories = [
             ("Privacy-Enhanced", "🔒"),
             ("Valid & Reliable", "✅"), 
@@ -403,12 +448,65 @@ def main():
         ]
 
         for i, (category, icon) in enumerate(categories):
+            column = col1 if i % 2 == 0 else col2
+            
+            if column.checkbox(f"{icon} {category}", key=f"multi_checkbox_{i}"):
+                selected_categories.append(category)
+
+        st.session_state.selected_categories = selected_categories
+
+        # Show selected categories
+        if selected_categories:
+            if len(selected_categories) == 1:
+                st.warning(f"Selected 1 category: {selected_categories[0]}. Consider selecting more for multi-category audit or use single-category option below.")
+            else:
+                st.success(f"Selected {len(selected_categories)} categories: {', '.join(selected_categories)}")
+        
+        # Start multi-category audit button
+        if st.button("Start Multi-Category Audit", disabled=len(selected_categories) < 2):
+            st.session_state.multi_category_mode = True
+            
+            # Create message for multi-category audit
+            categories_text = ", ".join(selected_categories)
+            message_text = f"I want to start a multi-category audit for {categories_text}"
+            
+            payload = {
+                "appName": "NIST-Agent",
+                "userId": "clyde",
+                "sessionId": "web_session",
+                "newMessage": {
+                    "parts": [{"text": message_text}],
+                    "role": "user"
+                }
+            }
+
+            with st.spinner(f"Starting multi-category audit for {len(selected_categories)} categories..."):
+                response = call_agent_api(payload)
+
+            if "error" not in response and response.get("success"):
+                add_message("user", f"Starting multi-category audit: {categories_text}")
+                add_message("assistant", response.get('content', 'Multi-category audit started successfully.'), parsed=True)
+
+                # Move to audit questions step
+                st.session_state.current_step = 'audit_questions'
+                st.rerun()
+            else:
+                st.error(f"Failed to start multi-category audit: {response.get('error', 'Unknown error')}")
+
+        st.markdown("---")
+
+        # Single category selection buttons (existing functionality preserved)
+        st.subheader("Single Category Audit")
+        col1, col2 = st.columns(2)
+
+        for i, (category, icon) in enumerate(categories):
             if i % 2 == 0:
                 column = col1
             else:
                 column = col2
 
-            if column.button(f"{icon} {category}", key=f"cat_{i}"):
+            if column.button(f"{icon} {category}", key=f"single_cat_{i}"):
+                st.session_state.multi_category_mode = False
                 # Start audit session with improved message
                 payload = {
                     "appName": "NIST-Agent",
