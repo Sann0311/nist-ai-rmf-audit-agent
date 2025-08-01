@@ -92,9 +92,6 @@ The system audits against 7 trustworthy AI characteristics:
 
 3. **Build and start all services:**
 
-   ```bash
-   # On Windows:
-   start_audit_agent.bat
 
    # On Linux/Mac:
    ./start_audit_agent.sh
