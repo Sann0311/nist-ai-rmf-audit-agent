@@ -1,4 +1,4 @@
-# 🔍 NIST AI RMF Audit Agent
+# NIST AI RMF Audit Agent
 
 > An AI-powered audit agent for conducting security posture assessments based on the **NIST AI Risk Management Framework (AI RMF)**
 
@@ -7,7 +7,7 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-red?logo=streamlit)](https://streamlit.io)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-teal?logo=fastapi)](https://fastapi.tiangolo.com)
 
-## 🌟 Features
+## Features
 
 - **Interactive Chat Interface** - Guided audit conversations using Streamlit
 - **7 NIST AI RMF Categories** - Complete coverage of trustworthy AI characteristics
@@ -19,7 +19,7 @@
 
 This is an AI-powered audit agent designed to conduct security posture assessments based on the **NIST AI Risk Management Framework (AI RMF)**. The system guides users through structured audits of the 7 NIST AI RMF trustworthy characteristics.
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -55,7 +55,7 @@ The system consists of three main components:
 - Provides category selection and guided audit workflow
 - Real-time progress tracking and audit session management
 
-## 📋 NIST AI RMF Categories
+## NIST AI RMF Categories
 
 The system audits against 7 trustworthy AI characteristics:
 
@@ -67,7 +67,7 @@ The system audits against 7 trustworthy AI characteristics:
 6. **Explainable and Interpretable** - Model interpretability
 7. **Fair – With Harmful Bias Managed** - Bias mitigation and fairness
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -114,7 +114,7 @@ The system audits against 7 trustworthy AI characteristics:
 - **Agent Service:** http://localhost:8000
 - **API Documentation:** http://localhost:8001/docs
 
-## 🔍 Audit Workflow
+## Audit Workflow
 
 ### 1. Category Selection
 
@@ -159,7 +159,7 @@ For each question in the selected category:
 - Session management across multiple questions
 - Audit trail maintenance
 
-## 📊 Data Structure
+## Data Structure
 
 ### Audit.xlsx Structure
 
@@ -181,7 +181,7 @@ Each audit session tracks:
 - Evidence evaluations
 - Conformity assessments
 
-## 🔧 Development
+## Development
 
 ### Local Development Setup
 
@@ -225,7 +225,7 @@ agent_skeleton/
 └── Audit.xlsx             # Source audit data
 ```
 
-## 🛠️ Customization
+## 🛠Customization
 
 ### Adding New Categories
 
@@ -245,7 +245,7 @@ agent_skeleton/
 - Implement corresponding frontend features
 - Update agent tool capabilities
 
-## 📚 API Reference
+## API Reference
 
 ### Backend Endpoints
 
@@ -262,14 +262,14 @@ agent_skeleton/
 - `submit_answer` - Submit observation
 - `submit_evidence` - Submit evidence for evaluation
 
-## 🔒 Security Considerations
+## Security Considerations
 
 - All audit data is processed locally
 - No external API calls for sensitive information
 - Session isolation and data protection
 - Configurable retention policies
 
-## 📝 Compliance Features
+## Compliance Features
 
 - NIST AI RMF alignment
 - Audit trail generation
@@ -277,7 +277,7 @@ agent_skeleton/
 - Conformity assessment reports
 - Progress tracking and reporting
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -301,22 +301,3 @@ agent_skeleton/
 - Monitor API calls in backend logs
 - Check Streamlit console for frontend issues
 
-## 📈 Future Enhancements
-
-- PDF report generation
-- Multi-language support
-- Advanced evidence analysis
-- Integration with compliance tools
-- Custom evaluation criteria
-- Automated evidence collection
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch
-3. Add tests for new functionality
-4. Submit pull request with documentation
-
-## 📄 License
-
-This project is designed for NIST AI RMF compliance assessments and follows open-source principles for security and transparency.
