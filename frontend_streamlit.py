@@ -1,3 +1,5 @@
+
+#frontend_streamlit.py
 import streamlit as st
 import httpx
 import json
@@ -30,7 +32,9 @@ def initialize_session_state():
         'debug_mode': False,
         'multi_category_mode': False,
         'waiting_for_transition': False,
-        'multi_audit_progress': None
+        'multi_audit_progress': None,
+        'show_results': False,
+        'assessment_data': None
     }
     
     for key, default_value in defaults.items():
@@ -183,8 +187,445 @@ def render_progress_bar(progress: Dict[str, Any], title: str = "Progress"):
         return progress_pct
     return 0
 
+def render_results_dashboard():
+    """Render a comprehensive results dashboard with beautiful styling"""
+    if not st.session_state.assessment_data:
+        st.error("No assessment data available. Please complete an audit first.")
+        return
+    
+    assessment = st.session_state.assessment_data
+    
+    # FIXED: Simplified top navigation - removed duplicate Generate New Assessment button
+    st.markdown("### Quick Actions")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("💬 Back to Chat", type="secondary", use_container_width=True, key="top_back_to_chat"):
+            st.session_state.show_results = False
+            st.rerun()
+    
+    with col2:
+        if st.button("🔄 Start New Audit", type="secondary", use_container_width=True, key="top_new_audit"):
+            st.session_state.show_results = False
+            st.session_state.current_step = 'category_selection'
+            # Reset session state
+            st.session_state.messages = []
+            st.session_state.audit_progress = None
+            st.session_state.multi_audit_progress = None
+            st.session_state.waiting_for_transition = False
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Custom CSS for better styling
+    st.markdown("""
+    <style>
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 4px solid #007bff;
+        margin: 10px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .risk-card {
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        border-left: 4px solid;
+    }
+    .risk-high { border-left-color: #dc3545; background-color: #f8d7da; }
+    .risk-medium { border-left-color: #ffc107; background-color: #fff3cd; }
+    .risk-low { border-left-color: #28a745; background-color: #d4edda; }
+    .strength-card {
+        background-color: #d4edda;
+        border-left: 4px solid #28a745;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .recommendation-card {
+        background-color: #e7f3ff;
+        border: 1px solid #b8daff;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    .compliance-box {
+        text-align: center;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 10px;
+        color: white;
+        font-weight: bold;
+    }
+    .full-compliance { background: linear-gradient(135deg, #28a745, #20c997); }
+    .partial-compliance { background: linear-gradient(135deg, #ffc107, #fd7e14); }
+    .no-compliance { background: linear-gradient(135deg, #dc3545, #e83e8c); }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Header with gradient background
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 30px;">
+        <h1 style="color: white; text-align: center; margin: 0;">
+            NIST AI RMF Audit Results Dashboard
+        </h1>
+        <p style="color: #e8e8e8; text-align: center; margin: 10px 0 0 0; font-size: 18px;">
+            Comprehensive Security Posture Assessment
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Key Metrics Row
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        score = assessment['overall_compliance_score']
+        delta = score - 80
+        st.metric(
+            "Overall Compliance Score",
+            f"{score}%",
+            delta=f"{delta:+.1f}% vs Target (80%)",
+            delta_color="normal" if delta >= 0 else "inverse"
+        )
+    
+    with col2:
+        risk_level = assessment['risk_level']
+        risk_color = assessment['risk_color']
+        st.markdown(f"""
+        <div class="metric-card" style="border-left-color: {risk_color};">
+            <h3 style="margin: 0; color: #333;">Risk Level</h3>
+            <h1 style="color: {risk_color}; margin: 5px 0; font-size: 2.5em;">{risk_level}</h1>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        categories_count = len(assessment['categories_audited'])
+        st.metric(
+            "Categories Audited",
+            f"{categories_count}/7",
+            delta=f"{categories_count} completed",
+            delta_color="normal"
+        )
+    
+    with col4:
+        st.metric(
+            "Total Evaluations",
+            assessment['total_evaluations'],
+            delta=f"{assessment['total_questions']} questions",
+            delta_color="normal"
+        )
+    
+    st.markdown("---")
+    
+    # Compliance Distribution Section
+    st.markdown("### Compliance Distribution Overview")
+    conformity_dist = assessment['conformity_distribution']
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        full_count = conformity_dist['Full Conformity']
+        total_evals = assessment['total_evaluations']
+        percentage = (full_count / total_evals * 100) if total_evals > 0 else 0
+        st.markdown(f"""
+        <div class="compliance-box full-compliance">
+            <h2 style="margin: 0;">{full_count}</h2>
+            <h4 style="margin: 5px 0;">Full Conformity</h4>
+            <p style="margin: 0; opacity: 0.9;">{percentage:.1f}% of total</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        partial_count = conformity_dist['Partial Conformity']
+        percentage = (partial_count / total_evals * 100) if total_evals > 0 else 0
+        st.markdown(f"""
+        <div class="compliance-box partial-compliance">
+            <h2 style="margin: 0;">{partial_count}</h2>
+            <h4 style="margin: 5px 0;">Partial Conformity</h4>
+            <p style="margin: 0; opacity: 0.9;">{percentage:.1f}% of total</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        no_count = conformity_dist['No Conformity']
+        percentage = (no_count / total_evals * 100) if total_evals > 0 else 0
+        st.markdown(f"""
+        <div class="compliance-box no-compliance">
+            <h2 style="margin: 0;">{no_count}</h2>
+            <h4 style="margin: 5px 0;">No Conformity</h4>
+            <p style="margin: 0; opacity: 0.9;">{percentage:.1f}% of total</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Category Performance Section
+    if len(assessment['category_summaries']) > 1:
+        st.markdown("### Category Performance Analysis")
+        
+        for i, category_summary in enumerate(assessment['category_summaries']):
+            category = category_summary['category']
+            conformity_counts = category_summary['conformity_counts']
+            total_q = sum(conformity_counts.values())
+            completion_rate = category_summary['completion_rate']
+            avg_score = category_summary['average_score']
+            
+            # Create expandable section for each category
+            with st.expander(f"{category} - {completion_rate:.0f}% Complete", expanded=i==0):
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Questions", total_q)
+                with col2:
+                    st.metric("Completion Rate", f"{completion_rate:.1f}%")
+                with col3:
+                    st.metric("Average Score", f"{avg_score:.2f}")
+                with col4:
+                    compliance_rate = (conformity_counts.get('Full Conformity', 0) / total_q * 100) if total_q > 0 else 0
+                    st.metric("Full Compliance Rate", f"{compliance_rate:.1f}%")
+                
+                # Visual breakdown
+                st.markdown("**Conformity Breakdown:**")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(f"""
+                    <div style="text-align: center; padding: 10px; background-color: #d4edda; border-radius: 5px;">
+                        <strong style="color: #28a745;">✅ Full Conformity</strong><br>
+                        <span style="font-size: 1.5em;">{conformity_counts.get('Full Conformity', 0)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"""
+                    <div style="text-align: center; padding: 10px; background-color: #fff3cd; border-radius: 5px;">
+                        <strong style="color: #856404;">⚠️ Partial Conformity</strong><br>
+                        <span style="font-size: 1.5em;">{conformity_counts.get('Partial Conformity', 0)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col3:
+                    st.markdown(f"""
+                    <div style="text-align: center; padding: 10px; background-color: #f8d7da; border-radius: 5px;">
+                        <strong style="color: #721c24;">❌ No Conformity</strong><br>
+                        <span style="font-size: 1.5em;">{conformity_counts.get('No Conformity', 0)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+    
+    # Risk Areas and Strengths Section
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Risk Areas & Action Items")
+        if assessment['risk_areas']:
+            for risk in assessment['risk_areas']:
+                priority = risk['priority']
+                risk_class = f"risk-{priority.lower()}"
+                priority_icon = "🔴" if priority == "High" else "🟡" if priority == "Medium" else "🟢"
+                
+                st.markdown(f"""
+                <div class="risk-card {risk_class}">
+                    <h4 style="margin: 0; display: flex; align-items: center;">
+                        {priority_icon} {risk['category']} 
+                        <span style="margin-left: auto; font-size: 0.8em; padding: 2px 8px; 
+                                     background-color: rgba(0,0,0,0.1); border-radius: 12px;">
+                            {priority} Priority
+                        </span>
+                    </h4>
+                    <p style="margin: 8px 0 0 0; font-size: 0.95em;">{risk['reason']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="strength-card">
+                <h4 style="margin: 0;">✅ Excellent Security Posture!</h4>
+                <p style="margin: 5px 0 0 0;">No significant risk areas identified across audited categories.</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("### Organizational Strengths")
+        if assessment['strengths']:
+            for strength in assessment['strengths']:
+                st.markdown(f"""
+                <div class="strength-card">
+                    <h4 style="margin: 0; color: #155724;">{strength['category']}</h4>
+                    <p style="margin: 5px 0 0 0; color: #155724;">{strength['reason']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="metric-card">
+                <h4 style="margin: 0;">Building Strengths</h4>
+                <p style="margin: 5px 0 0 0;">Complete audits across more categories to identify organizational strengths and best practices.</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # AI-Generated Recommendations Section
+    st.markdown("### AI-Generated Recommendations & Action Plan")
+    
+    if assessment['recommendations']:
+        # Group recommendations by priority
+        high_priority = [r for r in assessment['recommendations'] if r['priority'] == 'High']
+        medium_priority = [r for r in assessment['recommendations'] if r['priority'] == 'Medium']
+        low_priority = [r for r in assessment['recommendations'] if r['priority'] == 'Low']
+        
+        for priority_group, recommendations in [
+            ("🔴 High Priority Actions", high_priority),
+            ("🟡 Medium Priority Actions", medium_priority), 
+            ("🟢 Low Priority Actions", low_priority)
+        ]:
+            if recommendations:
+                st.markdown(f"#### {priority_group}")
+                for i, rec in enumerate(recommendations):
+                    with st.expander(f"{rec['title']}", expanded=(priority_group.startswith("🔴") and i==0)):
+                        st.markdown(f"**Category:** {rec['category']}")
+                        st.markdown(f"**Description:** {rec['description']}")
+                        st.markdown("**Recommended Actions:**")
+                        for j, action in enumerate(rec['actions'], 1):
+                            st.markdown(f"{j}. {action}")
+    else:
+        st.markdown("""
+        <div class="recommendation-card">
+            <h4 style="margin: 0;">Strong Compliance Detected!</h4>
+            <p style="margin: 10px 0 0 0;">Your audit results show excellent compliance across evaluated categories. 
+            Consider expanding your audit to additional NIST AI RMF categories to ensure comprehensive coverage.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Export and Actions Section
+    st.markdown("### Export & Next Steps")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Download Executive Summary", type="primary", use_container_width=True, key="download_summary"):
+            report_data = generate_executive_summary(assessment)
+            st.download_button(
+                label="Save Report",
+                data=report_data,
+                file_name=f"NIST_AI_RMF_Executive_Summary_{assessment['generated_at'][:10]}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+    
+    with col2:
+        if st.button("Export Detailed Data", type="secondary", use_container_width=True, key="export_data"):
+            st.download_button(
+                label="Save JSON Data",
+                data=json.dumps(assessment, indent=2),
+                file_name=f"NIST_AI_RMF_Data_{assessment['generated_at'][:10]}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
+def generate_executive_summary(assessment: Dict[str, Any]) -> str:
+    """Generate an executive summary report"""
+    report = f"""
+NIST AI RISK MANAGEMENT FRAMEWORK
+EXECUTIVE AUDIT SUMMARY
+
+Generated: {assessment['generated_at']}
+Assessment Period: {', '.join(assessment['categories_audited'])}
+
+═══════════════════════════════════════════════════════════════
+
+EXECUTIVE OVERVIEW
+
+Overall Compliance Score: {assessment['overall_compliance_score']}%
+Risk Classification: {assessment['risk_level']} Risk
+Categories Evaluated: {len(assessment['categories_audited'])} of 7 NIST AI RMF Categories
+Total Security Controls Assessed: {assessment['total_questions']}
+Evidence Evaluations Completed: {assessment['total_evaluations']}
+
+═══════════════════════════════════════════════════════════════
+
+COMPLIANCE DISTRIBUTION
+
+✓ Full Conformity: {assessment['conformity_distribution']['Full Conformity']} controls
+⚠ Partial Conformity: {assessment['conformity_distribution']['Partial Conformity']} controls  
+✗ Non-Conformity: {assessment['conformity_distribution']['No Conformity']} controls
+
+═══════════════════════════════════════════════════════════════
+
+AUDITED CATEGORIES
+
+{chr(10).join([f"• {cat}" for cat in assessment['categories_audited']])}
+
+═══════════════════════════════════════════════════════════════
+
+RISK ANALYSIS
+
+"""
+    
+    if assessment['risk_areas']:
+        report += "IDENTIFIED RISK AREAS:\n\n"
+        for risk in assessment['risk_areas']:
+            report += f"• {risk['category']} ({risk['priority']} Priority)\n"
+            report += f"  Issue: {risk['reason']}\n\n"
+    else:
+        report += "✓ No significant risk areas identified across audited categories.\n\n"
+    
+    if assessment['strengths']:
+        report += "ORGANIZATIONAL STRENGTHS:\n\n"
+        for strength in assessment['strengths']:
+            report += f"• {strength['category']}\n"
+            report += f"  Strength: {strength['reason']}\n\n"
+    
+    report += """═══════════════════════════════════════════════════════════════
+
+RECOMMENDED ACTIONS
+
+"""
+    
+    high_priority = [r for r in assessment['recommendations'] if r['priority'] == 'High']
+    medium_priority = [r for r in assessment['recommendations'] if r['priority'] == 'Medium']
+    
+    if high_priority:
+        report += "HIGH PRIORITY ACTIONS:\n\n"
+        for rec in high_priority:
+            report += f"• {rec['title']}\n"
+            report += f"  Category: {rec['category']}\n"
+            report += f"  Description: {rec['description']}\n"
+            report += "  Actions:\n"
+            for action in rec['actions']:
+                report += f"    - {action}\n"
+            report += "\n"
+    
+    if medium_priority:
+        report += "MEDIUM PRIORITY ACTIONS:\n\n"
+        for rec in medium_priority:
+            report += f"• {rec['title']}\n"
+            report += f"  Category: {rec['category']}\n"
+            report += f"  Actions: {', '.join(rec['actions'][:2])}{'...' if len(rec['actions']) > 2 else ''}\n\n"
+    
+    report += """═══════════════════════════════════════════════════════════════
+
+NEXT STEPS
+
+1. Address high-priority risk areas immediately
+2. Develop implementation timeline for recommended actions  
+3. Consider expanding audit to remaining NIST AI RMF categories
+4. Establish regular audit schedule for continuous compliance monitoring
+5. Update organizational AI governance policies based on findings
+
+═══════════════════════════════════════════════════════════════
+
+This assessment was generated using the NIST AI Risk Management Framework
+Audit Agent. For questions or additional analysis, please consult with your
+cybersecurity and AI governance teams.
+"""
+    
+    return report
+
 def render_agent_response(agent_response: dict):
-    """Render the agent's response with improved parsing and user-friendly display"""
+    """FIXED: Render the agent's response with NO DUPLICATES and proper UI"""
     if not isinstance(agent_response, dict):
         if isinstance(agent_response, str):
             st.markdown(agent_response)
@@ -195,15 +636,23 @@ def render_agent_response(agent_response: dict):
     action = agent_response.get("action", "").lower()
     message = agent_response.get("message", "")
     
-    # Handle progress display
+    # Handle assessment generation
+    if action == "assessment_generated":
+        st.session_state.assessment_data = agent_response.get("assessment")
+        st.success("Assessment Generated Successfully!")
+        st.info("Use the **'View Results Dashboard'** button in the sidebar to see your comprehensive analysis, risk assessment, and AI-generated recommendations.")
+        return
+    
+    # Handle progress display - FIXED: Update session state properly
     if "progress" in agent_response:
         progress = agent_response["progress"]
         render_progress_bar(progress)
         st.session_state.audit_progress = progress
     
-    # Handle multi-category progress display
+    # Handle multi-category progress display - FIXED: Update session state properly
     if "multi_audit_progress" in agent_response:
         multi_progress = agent_response["multi_audit_progress"]
+        # FIXED: Update multi-category progress correctly
         st.session_state.multi_audit_progress = multi_progress
         
         total_cats = multi_progress.get('total_categories', 0)
@@ -216,25 +665,27 @@ def render_agent_response(agent_response: dict):
                 text=f"Multi-Category Progress: {completed_count}/{total_cats} categories completed"
             )
             
-            # Show category status
+            # Show category status with better styling
             col1, col2 = st.columns(2)
             with col1:
                 completed_categories = multi_progress.get('completed_categories', [])
                 if completed_categories:
-                    st.success(f"✅ Completed: {', '.join(completed_categories)}")
+                    st.success(f"**Completed:** {', '.join(completed_categories)}")
             with col2:
                 remaining_categories = multi_progress.get('remaining_categories', [])
                 if remaining_categories:
                     display_remaining = remaining_categories[:2]
                     if len(remaining_categories) > 2:
                         display_remaining.append("...")
-                    st.info(f"⏳ Remaining: {', '.join(display_remaining)}")
+                    st.info(f"**Remaining:** {', '.join(display_remaining)}")
     
-    # Display message if present
+    # FIXED: Display message only once - no duplicates and no plain text question display
     if message:
-        st.markdown(message)
+        # Don't show the question in plain text if it's already shown in a box below
+        if not (action in ["category_selected", "session_exists", "multi_category_started", "next_category_started"] and "current_question" in agent_response):
+            st.markdown(message)
     
-    # Handle specific actions
+    # Handle specific actions without duplicates
     if action in ["category_selected", "session_exists", "multi_category_started", "next_category_started"]:
         # Set multi-category mode if this is a multi-category audit
         if action in ["multi_category_started", "next_category_started"] or agent_response.get("from_continue"):
@@ -247,15 +698,13 @@ def render_agent_response(agent_response: dict):
         elif action in ["next_category_started", "category_selected"]:
             st.session_state.waiting_for_transition = False
         
-        # Display current question
+        # FIXED: Display current question only once in purple box - no text duplication
         current_question = agent_response.get("current_question")
         if current_question:
             render_current_question(current_question)
     
-    elif action == "observation_recorded":
-        render_baseline_evidence(agent_response.get("baseline_evidence"))
-    
     elif action == "evidence_evaluated":
+        # FIXED: Only show the styled evaluation box, no plain text duplicate
         render_evidence_evaluation(agent_response)
     
     elif action == "category_completed_multi":
@@ -268,31 +717,71 @@ def render_agent_response(agent_response: dict):
         pass  # Help message already displayed above
     
     elif action == "error":
-        st.error(f"Error: {message}")
+        st.error(f"**Error:** {message}")
+    
+    # FIXED: Show results button immediately at top when audit is completed - no scrolling needed
+    if agent_response.get("show_results_button") or (action == "multi_audit_completed"):
+        # Immediately generate assessment and set results available
+        if not st.session_state.assessment_data:
+            with st.spinner("Generating comprehensive AI assessment..."):
+                generate_assessment()
+        
+        # Show immediate access to results
+        st.markdown("---")
+        st.markdown("### 🎉 Audit Completed Successfully!")
+        st.success("**Assessment Generated!** Use the '**View Results Dashboard**' button in the sidebar to see your detailed analysis.")
+        
+        # Make results immediately available in sidebar
+        if st.session_state.assessment_data:
+            st.info("**📊 Results Dashboard is now available in the sidebar →**")
     
     # Debug information
     if st.session_state.debug_mode:
         render_debug_info(agent_response)
 
 def render_current_question(current_question: dict):
-    """Render the current audit question"""
+    """FIXED: Render the current audit question with enhanced styling - SINGLE DISPLAY ONLY"""
     nist_control = current_question.get("nist_control", "N/A")
     
-    st.markdown("### 📋 Current Audit Question")
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 20px; border-radius: 10px; margin: 20px 0;">
+        <h3 style="color: white; margin: 0;">Current Audit Question</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
     if nist_control != "N/A":
-        st.markdown(f"**NIST Control:** {nist_control}")
+        st.markdown(f"**NIST Control:** `{nist_control}`")
     
     audit_question = current_question.get("audit_question") or current_question.get("sub_question", "")
-    st.markdown(f"**Question:** {audit_question}")
+    
+    # FIXED: Use proper styling with dark background and white text for visibility
+    st.markdown(f"""
+    <div style="background-color: #2d3748; color: white; padding: 20px; border-radius: 10px; 
+                border-left: 4px solid #007bff; margin: 10px 0;">
+        <strong style="color: #90cdf4;">Question:</strong><br>
+        <span style="color: white; font-size: 16px; line-height: 1.5;">{audit_question}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 def render_baseline_evidence(baseline_evidence: str):
-    """Render baseline evidence requirements"""
+    """Render baseline evidence requirements with enhanced styling"""
     if baseline_evidence:
-        st.markdown("### 📋 Baseline Evidence Requirements")
-        st.markdown(baseline_evidence)
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); 
+                    padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <h3 style="color: white; margin: 0;">Baseline Evidence Requirements</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
+            {baseline_evidence}
+        </div>
+        """, unsafe_allow_html=True)
 
 def render_evidence_evaluation(agent_response: dict):
-    """Render evidence evaluation results"""
+    """FIXED: Render evidence evaluation results with enhanced styling - NO DUPLICATES"""
     evaluation = agent_response.get("evaluation", {})
     
     conformity = evaluation.get("conformity")
@@ -305,20 +794,34 @@ def render_evidence_evaluation(agent_response: dict):
             'No Conformity': '#dc3545'
         }
         
-        color = conformity_colors.get(conformity, '#6c757d')
+        conformity_icons = {
+            'Full Conformity': '✅',
+            'Partial Conformity': '⚠️',
+            'No Conformity': '❌'
+        }
         
+        color = conformity_colors.get(conformity, '#6c757d')
+        icon = conformity_icons.get(conformity, '📋')
+        
+        # FIXED: Better styling with visible text on dark background
         st.markdown(f"""
-        <div style="border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
-            <h4 style="color: {color}; margin: 0 0 10px 0;">📋 Evidence Assessment Result</h4>
-            <p style="margin: 5px 0;"><strong>Conformity Level:</strong> <span style="color: {color};">{conformity}</span></p>
-            <p style="margin: 5px 0;"><strong>Justification:</strong> {justification}</p>
+        <div style="border: 2px solid {color}; border-radius: 15px; padding: 20px; margin: 20px 0; 
+                    background: linear-gradient(135deg, {color}15, {color}05);">
+            <h4 style="color: {color}; margin: 0 0 15px 0; display: flex; align-items: center;">
+                {icon} Evidence Assessment Result
+            </h4>
+            <div style="background-color: #f8f9fa; color: #333; padding: 15px; border-radius: 8px; border-left: 4px solid {color};">
+                <p style="margin: 5px 0;"><strong>Conformity Level:</strong> 
+                   <span style="color: {color}; font-weight: bold;">{conformity}</span></p>
+                <p style="margin: 5px 0 0 0;"><strong>Justification:</strong> {justification}</p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Show next question if available
+    # Show next question if available - SINGLE DISPLAY ONLY
     next_question = agent_response.get("next_question")
     if next_question:
-        st.markdown("### ➡️ Next Audit Question")
+        st.markdown("### Next Audit Question")
         render_current_question(next_question)
     
     # Handle completion or transition needs
@@ -326,8 +829,8 @@ def render_evidence_evaluation(agent_response: dict):
         st.session_state.waiting_for_transition = True
         next_category = agent_response.get("next_category")
         if next_category:
-            st.info(f"🎯 Ready to start next category: **{next_category}**")
-            st.info("👆 **Use the 'Continue to Next Category' button in the sidebar to proceed**")
+            st.info(f"**Ready to start next category:** **{next_category}**")
+            st.info("**Use the 'Continue to Next Category' button in the sidebar to proceed**")
     elif agent_response.get("completed"):
         if st.session_state.multi_category_mode:
             st.session_state.multi_category_mode = False
@@ -338,12 +841,13 @@ def handle_category_completion_multi(agent_response: dict):
     st.session_state.waiting_for_transition = True
     next_category = agent_response.get("next_category")
     if next_category:
-        st.info(f"🎯 Ready to start next category: **{next_category}**")
-        st.info("👆 **Use the 'Continue to Next Category' button in the sidebar to proceed**")
+        st.success(f"**Category completed!** Ready to start next category: **{next_category}**")
+        st.info("**Use the 'Continue to Next Category' button in the sidebar to proceed**")
 
 def handle_multi_audit_completion(agent_response: dict):
-    """Handle multi-category audit completion"""
-    st.success("🎉 Multi-Category Audit Completed Successfully!")
+    """Handle multi-category audit completion - REMOVED BALLOONS"""
+    # REMOVED: st.balloons() - no more unwanted celebration effects
+    st.success("**Multi-Category Audit Completed Successfully!**")
     st.session_state.multi_category_mode = False
     st.session_state.waiting_for_transition = False
     st.session_state.current_step = 'completed'
@@ -352,17 +856,46 @@ def handle_multi_audit_completion(agent_response: dict):
     multi_audit_summary = agent_response.get("multi_audit_summary")
     if multi_audit_summary:
         completed_categories = multi_audit_summary.get('completed_categories', [])
-        st.markdown("### 📊 Audit Summary")
+        st.markdown("### Audit Summary")
         st.markdown(f"**Completed Categories:** {len(completed_categories)}")
         for cat in completed_categories:
             st.markdown(f"✅ {cat}")
 
 def render_debug_info(agent_response: dict):
     """Render debug information"""
-    with st.expander("🐛 Debug: Raw Response Data", expanded=False):
+    with st.expander("Debug: Raw Response Data", expanded=False):
         st.json(agent_response)
         st.write(f"waiting_for_transition: {st.session_state.waiting_for_transition}")
         st.write(f"current_step: {st.session_state.current_step}")
+
+def generate_assessment():
+    """Generate AI assessment report"""
+    payload = {
+        "appName": "NIST-Agent",
+        "userId": "clyde",
+        "sessionId": "web_session",
+        "newMessage": {
+            "parts": [{"text": "generate assessment"}],
+            "role": "user"
+        }
+    }
+    
+    try:
+        with st.spinner("Generating comprehensive AI assessment..."):
+            response = call_agent_api(payload)
+        
+        if "error" not in response and response.get("success"):
+            content = response.get("content", {})
+            if isinstance(content, dict) and content.get("action") == "assessment_generated":
+                st.session_state.assessment_data = content.get("assessment")
+                # Don't automatically redirect to results - let user choose
+                st.success("**Assessment completed!** Use the 'View Results Dashboard' button in the sidebar.")
+                st.rerun()
+        else:
+            error_msg = response.get('error', 'Unknown error')
+            st.error(f"**Failed to generate assessment:** {error_msg}")
+    except Exception as e:
+        st.error(f"**Error generating assessment:** {str(e)}")
 
 def handle_continue_transition():
     """Handle the continue to next category action"""
@@ -391,10 +924,10 @@ def handle_continue_transition():
                 st.session_state.waiting_for_transition = False
                 st.session_state.current_step = 'completed'
             elif content.get("action") in ["category_selected", "next_category_started"]:
-                # Reset transition state and update progress
+                # FIXED: Reset transition state and update progress properly
                 st.session_state.waiting_for_transition = False
                 
-                # Update progress from the response
+                # FIXED: Update progress from the response properly
                 if "progress" in content:
                     st.session_state.audit_progress = content["progress"]
                 if "multi_audit_progress" in content:
@@ -403,45 +936,81 @@ def handle_continue_transition():
         st.rerun()
     else:
         error_msg = response.get('error', 'Unknown error')
-        st.error(f"Failed to continue to next category: {error_msg}")
+        st.error(f"**Failed to continue to next category:** {error_msg}")
 
 def render_sidebar():
-    """Render the sidebar with audit information"""
+    """FIXED: Render the sidebar with audit information - PROPER PROGRESS TRACKING"""
     with st.sidebar:
-        st.header("Audit Information")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            <h2 style="color: white; margin: 0; text-align: center;">Audit Control</h2>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Show continue button at top if waiting for transition
         if st.session_state.waiting_for_transition:
-            st.markdown("### 🎯 Ready for Next Category")
-            if st.button("🚀 Continue to Next Category", type="primary", key="sidebar_continue_btn", use_container_width=True):
+            st.markdown("### Ready for Next Category")
+            if st.button("**Continue to Next Category**", type="primary", key="sidebar_continue_btn", use_container_width=True):
                 handle_continue_transition()
             st.markdown("---")
         
-        # Show current audit progress
+        # FIXED: Show results button if assessment data is available OR if audit is completed
+        if st.session_state.assessment_data or st.session_state.current_step == 'completed':
+            st.markdown("### Results Available")
+            if st.button("**View Results Dashboard**", type="primary", key="view_results_btn", use_container_width=True):
+                # Generate assessment if not already done
+                if not st.session_state.assessment_data:
+                    with st.spinner("Generating assessment..."):
+                        generate_assessment()
+                st.session_state.show_results = True
+                st.rerun()
+            # FIXED: Make back to chat button functional
+            if st.button("**Back to Chat**", type="secondary", key="back_to_chat_btn", use_container_width=True):
+                st.session_state.show_results = False
+                st.rerun()
+            st.markdown("---")
+        
+        # FIXED: Show current audit progress with proper status display
         if st.session_state.audit_progress:
             progress = st.session_state.audit_progress
             current = progress.get('current', 0)
             total = progress.get('total', 0)
             category = progress.get('category', 'None')
-            status = progress.get('status', 'Not Started').title()
+            status = progress.get('status', 'Not Started')
             
-            st.metric("Current Progress", f"{current}/{total}")
+            # FIXED: Proper status determination
+            if status == "completed" or (current >= total and total > 0):
+                display_status = "Completed"
+            elif current > 0:
+                display_status = "In Progress"
+            else:
+                display_status = "Not Started"
+            
+            st.markdown("### Current Progress")
+            st.metric("Questions", f"{current}/{total}")
             st.metric("Category", category)
-            st.metric("Status", status)
+            st.metric("Status", display_status)
             
             if total > 0:
                 progress_pct = min(max(current / total, 0.0), 1.0)
                 st.progress(progress_pct, text=f"Question {current} of {total} ({int(progress_pct * 100)}%)")
         
-        # Show multi-category progress
+        # FIXED: Show multi-category progress with proper completion tracking
         if st.session_state.multi_audit_progress:
             multi_progress = st.session_state.multi_audit_progress
             total_cats = multi_progress.get('total_categories', 0)
             completed_count = multi_progress.get('completed_count', 0)
             
             st.markdown("---")
-            st.subheader("Multi-Category Progress")
-            st.metric("Categories Progress", f"{completed_count}/{total_cats}")
+            st.markdown("### Multi-Category Progress")
+            
+            # FIXED: Show actual completion status
+            if completed_count >= total_cats and total_cats > 0:
+                st.metric("Categories", f"{total_cats}/{total_cats}")
+                st.success("All categories completed!")
+            else:
+                st.metric("Categories", f"{completed_count}/{total_cats}")
             
             if total_cats > 0:
                 multi_progress_pct = min(max(completed_count / total_cats, 0.0), 1.0)
@@ -451,15 +1020,15 @@ def render_sidebar():
             remaining_categories = multi_progress.get('remaining_categories', [])
             
             if completed_categories:
-                st.success(f"✅ Completed: {', '.join(completed_categories)}")
+                st.success(f"**Completed:** {', '.join(completed_categories)}")
             if remaining_categories:
-                st.info(f"⏳ Remaining: {', '.join(remaining_categories)}")
+                st.info(f"**Remaining:** {', '.join(remaining_categories)}")
         
         if not st.session_state.audit_progress and not st.session_state.multi_audit_progress:
             st.info("No active audit session")
         
         st.markdown("---")
-        st.subheader("NIST AI RMF Categories")
+        st.markdown("### NIST AI RMF Categories")
         categories = [
             "1. Privacy-Enhanced",
             "2. Valid & Reliable",
@@ -470,11 +1039,14 @@ def render_sidebar():
             "7. Fair – With Harmful Bias Managed"
         ]
         for cat in categories:
-            st.write(f"• {cat}")
+            st.markdown(f"• {cat}")
         
         st.markdown("---")
         
-        if st.button("🔄 Reset Audit", type="secondary"):
+        # Debug toggle
+        st.session_state.debug_mode = st.checkbox("Debug Mode", value=st.session_state.debug_mode)
+        
+        if st.button("**Reset Audit**", type="secondary", use_container_width=True):
             reset_audit_session()
 
 def reset_audit_session():
@@ -486,20 +1058,23 @@ def reset_audit_session():
     st.session_state.multi_category_mode = False
     st.session_state.waiting_for_transition = False
     st.session_state.multi_audit_progress = None
+    st.session_state.show_results = False
+    st.session_state.assessment_data = None
+    st.success("**Audit session reset successfully!**")
     st.rerun()
 
 def render_category_selection():
     """Render the category selection interface"""
     if not st.session_state.messages:
         welcome_message = """
-        Welcome to the NIST AI Risk Management Framework Audit Agent!
+        **Welcome to the NIST AI Risk Management Framework Audit Agent!**
         
         I will guide you through a structured security posture assessment based on the 7 NIST AI RMF trustworthy characteristics.
         
         **Choose your audit approach:**
         
-        🔹 **Single Category Audit** - Focus on one specific category
-        🔹 **Multi-Category Audit** - Audit multiple categories sequentially
+        • **Single Category Audit** - Focus on one specific category for detailed assessment
+        • **Multi-Category Audit** - Audit multiple categories sequentially with comprehensive reporting
         
         **Available Categories:**
         1. **Privacy-Enhanced** - Data protection and privacy measures
@@ -519,8 +1094,8 @@ def render_category_selection():
 
 def render_multi_category_selection():
     """Render multi-category audit selection"""
-    st.subheader("Multi-Category Audit")
-    st.info("Select multiple categories for sequential auditing")
+    st.markdown("### Multi-Category Audit")
+    st.info("**Recommended for comprehensive organizational assessment** - Select multiple categories for sequential auditing with combined reporting")
 
     selected_categories = []
     col1, col2 = st.columns(2)
@@ -537,18 +1112,19 @@ def render_multi_category_selection():
 
     for i, (category, icon) in enumerate(categories):
         column = col1 if i % 2 == 0 else col2
-        if column.checkbox(f"{icon} {category}", key=f"multi_checkbox_{i}"):
+        if column.checkbox(f"{icon} **{category}**", key=f"multi_checkbox_{i}"):
             selected_categories.append(category)
 
     # Show selected categories feedback
     if selected_categories:
         if len(selected_categories) == 1:
-            st.warning(f"Selected 1 category: {selected_categories[0]}. Consider selecting more for multi-category audit or use single-category option below.")
+            st.warning(f"**Selected:** {selected_categories[0]}. Consider selecting additional categories for a comprehensive multi-category audit, or use the single-category option below.")
         else:
-            st.success(f"Selected {len(selected_categories)} categories: {', '.join(selected_categories)}")
+            st.success(f"**Selected {len(selected_categories)} categories:** {', '.join(selected_categories)}")
+            st.info("**Benefits:** Combined risk assessment, comprehensive recommendations, and executive-level reporting")
     
     # Start multi-category audit button
-    if st.button("Start Multi-Category Audit", disabled=len(selected_categories) < 2):
+    if st.button("**Start Multi-Category Audit**", disabled=len(selected_categories) < 2, type="primary", use_container_width=True):
         start_multi_category_audit_flow(selected_categories)
 
 def start_multi_category_audit_flow(selected_categories: List[str]):
@@ -578,11 +1154,13 @@ def start_multi_category_audit_flow(selected_categories: List[str]):
         st.rerun()
     else:
         error_msg = response.get('error', 'Unknown error')
-        st.error(f"Failed to start multi-category audit: {error_msg}")
+        st.error(f"**Failed to start multi-category audit:** {error_msg}")
 
 def render_single_category_selection():
     """Render single category audit selection"""
-    st.subheader("Single Category Audit")
+    st.markdown("### Single Category Audit")
+    st.info("**Perfect for focused assessment** - Deep dive into one specific NIST AI RMF category")
+    
     col1, col2 = st.columns(2)
 
     categories = [
@@ -597,7 +1175,7 @@ def render_single_category_selection():
 
     for i, (category, icon) in enumerate(categories):
         column = col1 if i % 2 == 0 else col2
-        if column.button(f"{icon} {category}", key=f"single_cat_{i}"):
+        if column.button(f"{icon} **{category}**", key=f"single_cat_{i}", use_container_width=True):
             start_single_category_audit(category)
 
 def start_single_category_audit(category: str):
@@ -624,19 +1202,19 @@ def start_single_category_audit(category: str):
         st.rerun()
     else:
         error_msg = response.get('error', 'Unknown error')
-        st.error(f"Failed to start audit: {error_msg}")
+        st.error(f"**Failed to start audit:** {error_msg}")
 
 def render_audit_questions():
     """Render the audit questions interface"""
     # Show continue button at top if waiting for transition
     if st.session_state.waiting_for_transition:
-        st.markdown("### 🎯 Category Completed!")
-        st.info("**Ready to continue to next category - Use the button in the sidebar →**")
+        st.markdown("### Category Completed!")
+        st.info("**Ready to continue to next category - Use the 'Continue to Next Category' button in the sidebar →**")
         st.markdown("---")
     
     # Chat input for ongoing audit (only show if not waiting for transition)
     if not st.session_state.waiting_for_transition:
-        if prompt := st.chat_input("Type your response..."):
+        if prompt := st.chat_input("Type your response here..."):
             handle_user_input(prompt)
 
 def handle_user_input(prompt: str):
@@ -672,27 +1250,51 @@ def handle_user_input(prompt: str):
                 st.session_state.current_step = 'completed'
     else:
         error_msg = response.get('error', 'Unknown error occurred')
-        st.error(f"Error: {error_msg}")
+        st.error(f"**Error:** {error_msg}")
         add_message("assistant", f"I encountered an error: {error_msg}")
 
     st.rerun()
 
 def render_completed_state():
-    """Render the completed audit state"""
-    st.success("🎉 Audit session completed successfully!")
-    st.info("You can start a new audit session by clicking the Reset Audit button in the sidebar.")
+    """Render the completed audit state - REMOVED BALLOONS"""
+    # REMOVED: st.balloons() - no more unwanted celebration effects
+    st.success("**Audit session completed successfully!**")
+    
+    # FIXED: Automatically generate assessment and show results availability
+    if not st.session_state.assessment_data:
+        with st.spinner("Generating comprehensive AI assessment..."):
+            generate_assessment()
+    
+    if st.session_state.assessment_data:
+        st.info("**Assessment completed!** Use the '**View Results Dashboard**' button in the sidebar to see your detailed analysis.")
+    else:
+        st.error("Failed to generate assessment. Please try again.")
 
 def main():
     """Main application function"""
-    # Header
-    st.title("NIST AI RMF Audit Agent")
-    st.markdown("### Security Posture Assessment Based on NIST AI Risk Management Framework")
+    # Check if we should show results dashboard
+    if st.session_state.show_results and st.session_state.assessment_data:
+        render_results_dashboard()
+        return
+    
+    # Header with gradient background
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 30px;">
+        <h1 style="color: white; text-align: center; margin: 0;">
+            NIST AI RMF Audit Agent
+        </h1>
+        <p style="color: #e8e8e8; text-align: center; margin: 10px 0 0 0; font-size: 18px;">
+            Security Posture Assessment Based on NIST AI Risk Management Framework
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Render sidebar
     render_sidebar()
     
     # Main chat interface
-    st.header("💬 Audit Conversation")
+    st.header("Audit Conversation")
     
     # Display chat history
     chat_container = st.container()
@@ -710,661 +1312,14 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; color: #666;'>
-        <small>NIST AI Risk Management Framework Audit Agent | Built with Streamlit</small>
+    <div style='text-align: center; color: #666; padding: 20px;'>
+        <small>
+            <strong>NIST AI Risk Management Framework Audit Agent</strong> | 
+            Built with Streamlit | 
+            AI-Powered Assessment & Recommendations
+        </small>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-
-# import streamlit as st
-# import httpx
-# import json
-# from typing import Dict, Any
-
-
-# # Configure Streamlit page
-# st.set_page_config(
-#     page_title="NIST AI RMF Audit Agent",
-#     page_icon="🔍",
-#     layout="wide",
-#     initial_sidebar_state="expanded"
-# )
-
-# # Backend API URL - use backend service name in Docker
-# BACKEND_URL = "http://backend:8001"  # Use Docker service name
-
-# # Initialize session state
-# if 'audit_session_id' not in st.session_state:
-#     st.session_state.audit_session_id = None
-# if 'current_step' not in st.session_state:
-#     st.session_state.current_step = 'category_selection'
-# if 'messages' not in st.session_state:
-#     st.session_state.messages = []
-# if 'audit_progress' not in st.session_state:
-#     st.session_state.audit_progress = None
-# if 'debug_mode' not in st.session_state:
-#     st.session_state.debug_mode = False
-# if 'multi_category_mode' not in st.session_state:
-#     st.session_state.multi_category_mode = False
-# if 'waiting_for_transition' not in st.session_state:
-#     st.session_state.waiting_for_transition = False
-# if 'multi_audit_progress' not in st.session_state:
-#     st.session_state.multi_audit_progress = None
-
-
-# def parse_agent_response(raw_response):
-#     """Parse the nested JSON response from the agent to extract user-friendly content"""
-#     try:
-#         # Debug logging for development
-#         if st.session_state.get('debug_mode', False):
-#             print(f"🔍 Parsing response type: {type(raw_response)}")
-#             print(f"🔍 Raw response: {raw_response}")
-       
-#         # Handle Google ADK response format - it returns an array of message objects
-#         if isinstance(raw_response, list) and len(raw_response) > 0:
-#             # Look for the latest message with function response (tool result)
-#             for message in reversed(raw_response):
-#                 if isinstance(message, dict) and "content" in message:
-#                     content = message["content"]
-#                     if "parts" in content:
-#                         for part in content["parts"]:
-#                             # Check for function response with tool result
-#                             if "functionResponse" in part:
-#                                 func_response = part["functionResponse"]
-#                                 if "response" in func_response:
-#                                     tool_result = func_response["response"]
-#                                     if st.session_state.get('debug_mode', False):
-#                                         print(f"✅ Found function response: {tool_result}")
-#                                     return tool_result
-#                             # Check for plain text responses
-#                             elif "text" in part:
-#                                 text_content = part["text"]
-#                                 # Try to parse if it's JSON
-#                                 try:
-#                                     import json
-#                                     json_content = json.loads(text_content)
-#                                     if st.session_state.get('debug_mode', False):
-#                                         print(f"✅ Parsed JSON from text: {json_content}")
-#                                     return json_content
-#                                 except json.JSONDecodeError:
-#                                     if st.session_state.get('debug_mode', False):
-#                                         print(f"✅ Plain text response: {text_content}")
-#                                     return {"message": text_content, "action": "text_response"}
-           
-#             # Fallback - return the complete last message for frontend parsing
-#             if raw_response and len(raw_response) > 0:
-#                 last_message = raw_response[-1]
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"⚠️ Using fallback - last message: {last_message}")
-#                 return last_message
-       
-#         # Handle single object format
-#         elif isinstance(raw_response, dict):
-#             # Check for Google ADK response format
-#             if "content" in raw_response:
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"🔄 Processing single object with content")
-#                 return parse_agent_response([raw_response])  # Convert to list and reprocess
-#             elif "message" in raw_response:
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"✅ Direct message response: {raw_response}")
-#                 return raw_response
-#             elif "response" in raw_response:
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"✅ Response wrapper: {raw_response['response']}")
-#                 return raw_response["response"]
-#             # Check for tool call results
-#             elif "toolCalls" in raw_response and raw_response["toolCalls"]:
-#                 tool_result = raw_response["toolCalls"][0].get("result", {})
-#                 if isinstance(tool_result, dict) and "message" in tool_result:
-#                     if st.session_state.get('debug_mode', False):
-#                         print(f"✅ Tool call result: {tool_result}")
-#                     return tool_result
-#                 else:
-#                     if st.session_state.get('debug_mode', False):
-#                         print(f"⚠️ Tool call result (string): {tool_result}")
-#                     return {"message": str(tool_result), "action": "tool_response"}
-#             else:
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"✅ Direct object response: {raw_response}")
-#                 return raw_response
-#         else:
-#             if st.session_state.get('debug_mode', False):
-#                 print(f"⚠️ Unknown response format: {raw_response}")
-#             return {"message": str(raw_response), "action": "unknown_response"}
-       
-#         return None
-#     except Exception as e:
-#         print(f"❌ Error parsing agent response: {e}")
-#         print(f"Raw response type: {type(raw_response)}")
-#         print(f"Raw response: {raw_response}")
-#         return {"message": f"Error parsing response: {e}", "action": "error"}
-
-
-# def call_agent_api(payload: Dict[str, Any]) -> Dict[str, Any]:
-#     """Call the agent API through the backend"""
-#     try:
-#         with httpx.Client(timeout=60.0) as client:
-#             response = client.post(f"{BACKEND_URL}/api/run", json=payload)
-#             if response.status_code == 200:
-#                 result = response.json()
-               
-#                 # Debug logging
-#                 if st.session_state.get('debug_mode', False):
-#                     print(f"🔍 Frontend received from backend: {result}")
-               
-#                 # Backend has already parsed the response, just extract the content
-#                 if result.get("success") and "content" in result:
-#                     return {"content": result["content"], "success": True}
-#                 else:
-#                     # Fallback to try parsing the entire result if backend parsing failed
-#                     parsed_content = parse_agent_response(result)
-#                     if parsed_content is not None:
-#                         return {"content": parsed_content, "success": True}
-#                     else:
-#                         return {"content": result, "success": True}
-#             else:
-#                 return {"error": f"API call failed with status {response.status_code}: {response.text}"}
-#     except Exception as e:
-#         return {"error": f"Failed to connect to backend: {str(e)}"}
-
-
-# def add_message(role: str, content: str, parsed: bool = False):
-#     """Add a message to the chat history. If parsed=True, content is a dict to be rendered nicely."""
-#     st.session_state.messages.append({"role": role, "content": content, "parsed": parsed})
-
-
-# def display_chat_history():
-#     """Display the chat history with pretty formatting for agent responses."""
-#     for message in st.session_state.messages:
-#         with st.chat_message(message["role"]):
-#             if message.get("parsed") and isinstance(message["content"], dict):
-#                 render_agent_response(message["content"])
-#             else:
-#                 st.write(message["content"])
-
-
-# def render_agent_response(agent_response: dict):
-#     """Render the agent's response with improved parsing and user-friendly display"""
-   
-#     # Ensure we're working with a dictionary
-#     if not isinstance(agent_response, dict):
-#         if isinstance(agent_response, str):
-#             st.markdown(agent_response)
-#         else:
-#             st.markdown("Response received successfully.")
-#         return
-   
-#     # Get action and message
-#     action = agent_response.get("action", "").lower()
-#     message = agent_response.get("message", "")
-   
-#     # Handle progress display
-#     if "progress" in agent_response:
-#         progress = agent_response["progress"]
-#         current = progress.get('current', 0)
-#         total = progress.get('total', 0)
-       
-#         if total > 0:
-#             progress_pct = min(max(current / total, 0.0), 1.0)
-#             category = progress.get('category', 'Current Category')
-#             st.progress(progress_pct, text=f"{category}: Question {current} of {total}")
-#             st.session_state.audit_progress = progress
-   
-#     # Handle multi-category progress display
-#     if "multi_audit_progress" in agent_response:
-#         multi_progress = agent_response["multi_audit_progress"]
-#         st.session_state.multi_audit_progress = multi_progress
-       
-#         total_cats = multi_progress.get('total_categories', 0)
-#         completed_count = multi_progress.get('completed_count', 0)
-       
-#         if total_cats > 0:
-#             multi_progress_pct = min(max(completed_count / total_cats, 0.0), 1.0)
-#             st.progress(multi_progress_pct, text=f"Multi-Category Progress: {completed_count}/{total_cats} categories completed")
-           
-#             # Show category status
-#             col1, col2 = st.columns(2)
-#             with col1:
-#                 completed_categories = multi_progress.get('completed_categories', [])
-#                 if completed_categories:
-#                     st.success(f"✅ Completed: {', '.join(completed_categories)}")
-#             with col2:
-#                 remaining_categories = multi_progress.get('remaining_categories', [])
-#                 if remaining_categories:
-#                     st.info(f"⏳ Remaining: {', '.join(remaining_categories[:2])}{'...' if len(remaining_categories) > 2 else ''}")
-   
-#     # Display message if present
-#     if message:
-#         st.markdown(message)
-   
-#     # Handle specific actions
-#     if action in ["category_selected", "session_exists", "multi_category_started", "next_category_started"]:
-#         # Set multi-category mode if this is a multi-category audit
-#         if action in ["multi_category_started", "next_category_started"] or agent_response.get("from_continue"):
-#             st.session_state.multi_category_mode = True
-           
-#         # CRITICAL FIX: Reset waiting_for_transition when starting new category
-#         if action == "category_selected" and agent_response.get("from_continue"):
-#             print("DEBUG UI: Resetting waiting_for_transition due to category transition")
-#             st.session_state.waiting_for_transition = False
-#         elif action in ["next_category_started", "category_selected"]:
-#             st.session_state.waiting_for_transition = False
-       
-#         # Display current question
-#         current_question = agent_response.get("current_question")
-#         if current_question:
-#             nist_control = current_question.get("nist_control", "N/A")
-           
-#             st.markdown(f"### 📋 Current Audit Question")
-#             if nist_control != "N/A":
-#                 st.markdown(f"**NIST Control:** {nist_control}")
-           
-#             audit_question = current_question.get("audit_question") or current_question.get("sub_question", "")
-#             st.markdown(f"**Question:** {audit_question}")
-   
-#     elif action == "observation_recorded":
-#         # Display baseline evidence requirements
-#         baseline_evidence = agent_response.get("baseline_evidence")
-#         if baseline_evidence:
-#             st.markdown("### 📋 Baseline Evidence Requirements")
-#             st.markdown(baseline_evidence)
-   
-#     elif action == "evidence_evaluated":
-#         # Display evaluation results
-#         evaluation = agent_response.get("evaluation", {})
-       
-#         conformity = evaluation.get("conformity")
-#         justification = evaluation.get("justification")
-       
-#         if conformity:
-#             # Color coding for conformity
-#             conformity_colors = {
-#                 'Full Conformity': '#28a745',
-#                 'Partial Conformity': '#ffc107',
-#                 'No Conformity': '#dc3545'
-#             }
-           
-#             color = conformity_colors.get(conformity, '#6c757d')
-           
-#             with st.container():
-#                 st.markdown(f"""
-#                 <div style="border: 2px solid {color}; border-radius: 10px; padding: 15px; margin: 10px 0;">
-#                     <h4 style="color: {color}; margin: 0 0 10px 0;">📋 Evidence Assessment Result</h4>
-#                     <p style="margin: 5px 0;"><strong>Conformity Level:</strong> <span style="color: {color};">{conformity}</span></p>
-#                     <p style="margin: 5px 0;"><strong>Justification:</strong> {justification}</p>
-#                 </div>
-#                 """, unsafe_allow_html=True)
-       
-#         # Show next question if available
-#         next_question = agent_response.get("next_question")
-#         if next_question:
-#             nist_control = next_question.get("nist_control", "N/A")
-           
-#             st.markdown(f"### ➡️ Next Audit Question")
-#             if nist_control != "N/A":
-#                 st.markdown(f"**NIST Control:** {nist_control}")
-           
-#             audit_question = next_question.get("audit_question") or next_question.get("sub_question", "")
-#             st.markdown(f"**Question:** {audit_question}")
-       
-#         # Handle completion or transition needs
-#         if agent_response.get("needs_transition"):
-#             # Category completed in multi-audit, show transition button
-#             st.session_state.waiting_for_transition = True
-#             next_category = agent_response.get("next_category")
-#             if next_category:
-#                 st.info(f"🎯 Ready to start next category: **{next_category}**")
-#         elif agent_response.get("completed"):
-#             # Audit fully completed
-#             if st.session_state.multi_category_mode:
-#                 st.session_state.multi_category_mode = False
-#             st.session_state.current_step = 'completed'
-   
-#     elif action == "category_completed_multi":
-#         # Category completed in multi-audit, show transition controls
-#         st.session_state.waiting_for_transition = True
-#         next_category = agent_response.get("next_category")
-#         if next_category:
-#             st.info(f"🎯 Ready to start next category: **{next_category}**")
-   
-#     elif action == "multi_audit_completed":
-#         # Multi-category audit fully completed
-#         st.success("🎉 Multi-Category Audit Completed Successfully!")
-#         st.session_state.multi_category_mode = False
-#         st.session_state.waiting_for_transition = False
-#         st.session_state.current_step = 'completed'
-       
-#         # Display summary if available
-#         multi_audit_summary = agent_response.get("multi_audit_summary")
-#         if multi_audit_summary:
-#             completed_categories = multi_audit_summary.get('completed_categories', [])
-#             st.markdown(f"### 📊 Audit Summary")
-#             st.markdown(f"**Completed Categories:** {len(completed_categories)}")
-#             for cat in completed_categories:
-#                 st.markdown(f"✅ {cat}")
-   
-#     elif action == "help":
-#         # Help message already displayed above
-#         pass
-   
-#     elif action == "error":
-#         st.error(f"Error: {message}")
-   
-#     # Debug information
-#     if st.session_state.get('debug_mode', False):
-#         with st.expander("🐛 Debug: Raw Response Data", expanded=False):
-#             st.json(agent_response)
-#             st.write(f"waiting_for_transition: {st.session_state.waiting_for_transition}")
-#             st.write(f"current_step: {st.session_state.current_step}")
-
-
-# def handle_continue_transition():
-#     """Handle the continue to next category action"""
-#     payload = {
-#         "appName": "NIST-Agent",
-#         "userId": "clyde",
-#         "sessionId": "web_session",
-#         "newMessage": {
-#             "parts": [{"text": "continue to next category"}],
-#             "role": "user"
-#         }
-#     }
-   
-#     with st.spinner("Starting next category..."):
-#         response = call_agent_api(payload)
-   
-#     if "error" not in response and response.get("success"):
-#         add_message("user", "Continue to next category")
-#         add_message("assistant", response.get("content", "Next category started successfully."), parsed=True)
-       
-#         # Check if this completed the entire multi-audit
-#         content = response.get("content", {})
-#         if isinstance(content, dict):
-#             if content.get("action") == "multi_audit_completed":
-#                 st.session_state.multi_category_mode = False
-#                 st.session_state.waiting_for_transition = False
-#                 st.session_state.current_step = 'completed'
-#             elif content.get("action") in ["category_selected", "next_category_started"]:
-#                 # The render_agent_response will handle resetting waiting_for_transition
-#                 pass
-       
-#         st.rerun()
-#     else:
-#         st.error(f"Failed to continue to next category: {response.get('error', 'Unknown error')}")
-
-
-# def main():
-#     # Header
-#     st.title("NIST AI RMF Audit Agent")
-#     st.markdown("### Security Posture Assessment Based on NIST AI Risk Management Framework")
-   
-#     # Sidebar with audit information
-#     with st.sidebar:
-#         st.header("Audit Information")
-       
-#         # Show current audit progress
-#         if st.session_state.audit_progress:
-#             progress = st.session_state.audit_progress
-#             current = progress.get('current', 0)
-#             total = progress.get('total', 0)
-#             category = progress.get('category', 'None')
-#             status = progress.get('status', 'Not Started').title()
-           
-#             st.metric("Current Progress", f"{current}/{total}")
-#             st.metric("Category", category)
-#             st.metric("Status", status)
-           
-#             if total > 0:
-#                 progress_pct = min(max(current / total, 0.0), 1.0)
-#                 st.progress(progress_pct, text=f"Question {current} of {total} ({int(progress_pct * 100)}%)")
-       
-#         # Show multi-category progress
-#         if st.session_state.multi_audit_progress:
-#             multi_progress = st.session_state.multi_audit_progress
-#             total_cats = multi_progress.get('total_categories', 0)
-#             completed_count = multi_progress.get('completed_count', 0)
-           
-#             st.markdown("---")
-#             st.subheader("Multi-Category Progress")
-#             st.metric("Categories Progress", f"{completed_count}/{total_cats}")
-           
-#             if total_cats > 0:
-#                 multi_progress_pct = min(max(completed_count / total_cats, 0.0), 1.0)
-#                 st.progress(multi_progress_pct, text=f"{completed_count} of {total_cats} completed")
-           
-#             completed_categories = multi_progress.get('completed_categories', [])
-#             remaining_categories = multi_progress.get('remaining_categories', [])
-           
-#             if completed_categories:
-#                 st.success(f"✅ Completed: {', '.join(completed_categories)}")
-#             if remaining_categories:
-#                 st.info(f"⏳ Remaining: {', '.join(remaining_categories)}")
-       
-#         if not st.session_state.audit_progress and not st.session_state.multi_audit_progress:
-#             st.info("No active audit session")
-       
-#         st.markdown("---")
-#         st.subheader("NIST AI RMF Categories")
-#         categories = [
-#             "1. Privacy-Enhanced",
-#             "2. Valid & Reliable",
-#             "3. Safe",
-#             "4. Secure & Resilient",
-#             "5. Accountable & Transparent",
-#             "6. Explainable and Interpretable",
-#             "7. Fair – With Harmful Bias Managed"
-#         ]
-#         for cat in categories:
-#             st.write(f"• {cat}")
-       
-#         st.markdown("---")
-       
-#         if st.button("🔄 Reset Audit", type="secondary"):
-#             st.session_state.audit_session_id = None
-#             st.session_state.current_step = 'category_selection'
-#             st.session_state.messages = []
-#             st.session_state.audit_progress = None
-#             st.session_state.multi_category_mode = False
-#             st.session_state.waiting_for_transition = False
-#             st.session_state.multi_audit_progress = None
-#             st.rerun()
-   
-#     # Main chat interface
-#     st.header("💬 Audit Conversation")
-   
-#     # Show continue button if waiting for transition
-#     if st.session_state.waiting_for_transition:
-#         st.info("🎯 Category completed! Ready to continue to next category.")
-#         col1, col2 = st.columns([1, 3])
-#         with col1:
-#             if st.button("Continue to Next Category", type="primary", key="continue_btn"):
-#                 handle_continue_transition()
-#         with col2:
-#             st.markdown("*Click to start the next category in your multi-category audit*")
-#         st.markdown("---")
-   
-#     # Display chat history
-#     chat_container = st.container()
-#     with chat_container:
-#         display_chat_history()
-   
-#     # Handle different steps of the audit process
-#     if st.session_state.current_step == 'category_selection':
-#         if not st.session_state.messages:
-#             add_message("assistant", """
-#             Welcome to the NIST AI Risk Management Framework Audit Agent!
-           
-#             I will guide you through a structured security posture assessment based on the 7 NIST AI RMF trustworthy characteristics.
-           
-#             **Choose your audit approach:**
-           
-#             🔹 **Single Category Audit** - Focus on one specific category
-#             🔹 **Multi-Category Audit** - Audit multiple categories sequentially
-           
-#             **Available Categories:**
-#             1. **Privacy-Enhanced** - Data protection and privacy measures
-#             2. **Valid & Reliable** - Model accuracy and performance validation  
-#             3. **Safe** - Safety measures and risk mitigation
-#             4. **Secure & Resilient** - Security controls and resilience
-#             5. **Accountable & Transparent** - Governance and transparency
-#             6. **Explainable and Interpretable** - Model interpretability
-#             7. **Fair – With Harmful Bias Managed** - Bias mitigation and fairness
-#             """)
-#             st.rerun()
-
-#         # Multi-category selection section
-#         st.subheader("Multi-Category Audit")
-#         st.info("Select multiple categories for sequential auditing")
-
-#         # Multi-category selection with checkboxes
-#         selected_categories = []
-#         col1, col2 = st.columns(2)
-       
-#         categories = [
-#             ("Privacy-Enhanced", "🔒"),
-#             ("Valid & Reliable", "✅"),
-#             ("Safe", "🛡️"),
-#             ("Secure & Resilient", "🔐"),
-#             ("Accountable & Transparent", "📊"),
-#             ("Explainable and Interpretable", "🔍"),
-#             ("Fair – With Harmful Bias Managed", "⚖️")
-#         ]
-
-#         for i, (category, icon) in enumerate(categories):
-#             column = col1 if i % 2 == 0 else col2
-           
-#             if column.checkbox(f"{icon} {category}", key=f"multi_checkbox_{i}"):
-#                 selected_categories.append(category)
-
-#         # Show selected categories
-#         if selected_categories:
-#             if len(selected_categories) == 1:
-#                 st.warning(f"Selected 1 category: {selected_categories[0]}. Consider selecting more for multi-category audit or use single-category option below.")
-#             else:
-#                 st.success(f"Selected {len(selected_categories)} categories: {', '.join(selected_categories)}")
-       
-#         # Start multi-category audit button
-#         if st.button("Start Multi-Category Audit", disabled=len(selected_categories) < 2):
-#             st.session_state.multi_category_mode = True
-           
-#             categories_text = ", ".join(selected_categories)
-#             message_text = f"I want to start a multi-category audit for {categories_text}"
-           
-#             payload = {
-#                 "appName": "NIST-Agent",
-#                 "userId": "clyde",
-#                 "sessionId": "web_session",
-#                 "newMessage": {
-#                     "parts": [{"text": message_text}],
-#                     "role": "user"
-#                 }
-#             }
-
-#             with st.spinner(f"Starting multi-category audit for {len(selected_categories)} categories..."):
-#                 response = call_agent_api(payload)
-
-#             if "error" not in response and response.get("success"):
-#                 add_message("user", f"Starting multi-category audit: {categories_text}")
-#                 add_message("assistant", response.get('content', 'Multi-category audit started successfully.'), parsed=True)
-
-#                 st.session_state.current_step = 'audit_questions'
-#                 st.rerun()
-#             else:
-#                 st.error(f"Failed to start multi-category audit: {response.get('error', 'Unknown error')}")
-
-#         st.markdown("---")
-
-#         # Single category selection buttons
-#         st.subheader("Single Category Audit")
-#         col1, col2 = st.columns(2)
-
-#         for i, (category, icon) in enumerate(categories):
-#             if i % 2 == 0:
-#                 column = col1
-#             else:
-#                 column = col2
-
-#             if column.button(f"{icon} {category}", key=f"single_cat_{i}"):
-#                 st.session_state.multi_category_mode = False
-               
-#                 payload = {
-#                     "appName": "NIST-Agent",
-#                     "userId": "clyde",
-#                     "sessionId": "web_session",
-#                     "newMessage": {
-#                         "parts": [{"text": f"I want to audit the {category} category"}],
-#                         "role": "user"
-#                     }
-#                 }
-
-#                 with st.spinner(f"Starting audit for {category}..."):
-#                     response = call_agent_api(payload)
-
-#                 if "error" not in response and response.get("success"):
-#                     add_message("user", f"I want to audit the {category} category")
-#                     add_message("assistant", response.get("content", "Audit session started successfully."), parsed=True)
-
-#                     st.session_state.current_step = 'audit_questions'
-#                     st.rerun()
-#                 else:
-#                     st.error(f"Failed to start audit: {response.get('error', 'Unknown error')}")
-   
-#     elif st.session_state.current_step == 'audit_questions':
-#         # Chat input for ongoing audit (only show if not waiting for transition)
-#         if not st.session_state.waiting_for_transition:
-#             if prompt := st.chat_input("Type your response..."):
-#                 add_message("user", prompt)
-
-#                 payload = {
-#                     "appName": "NIST-Agent",
-#                     "userId": "clyde",
-#                     "sessionId": "web_session",
-#                     "newMessage": {
-#                         "parts": [{"text": prompt}],
-#                         "role": "user"
-#                     }
-#                 }
-
-#                 with st.spinner("Processing your response..."):
-#                     response = call_agent_api(payload)
-
-#                 if "error" not in response and response.get("success"):
-#                     content = response.get("content", "Response received successfully.")
-#                     add_message("assistant", content, parsed=True)
-
-#                     # Check for completion or transition needs
-#                     if isinstance(content, dict):
-#                         if content.get("action") == "multi_audit_completed":
-#                             st.session_state.current_step = 'completed'
-#                             st.session_state.multi_category_mode = False
-#                             st.session_state.waiting_for_transition = False
-#                         elif content.get("needs_transition"):
-#                             st.session_state.waiting_for_transition = True
-#                         elif content.get("completed") and not st.session_state.multi_category_mode:
-#                             st.session_state.current_step = 'completed'
-#                 else:
-#                     error_msg = response.get('error', 'Unknown error occurred')
-#                     st.error(f"Error: {error_msg}")
-#                     add_message("assistant", f"I encountered an error: {error_msg}")
-
-#                 st.rerun()
-   
-#     elif st.session_state.current_step == 'completed':
-#         st.success("🎉 Audit session completed successfully!")
-#         st.info("You can start a new audit session by clicking the Reset Audit button in the sidebar.")
-   
-#     # Footer
-#     st.markdown("---")
-#     st.markdown("""
-#     <div style='text-align: center; color: #666;'>
-#         <small>NIST AI Risk Management Framework Audit Agent | Built with Streamlit</small>
-#     </div>
-#     """, unsafe_allow_html=True)
-
-
-# if __name__ == "__main__":
-#     main()
-
