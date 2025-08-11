@@ -1,4 +1,3 @@
-
 #tool.py 
 
 from pydantic import BaseModel
@@ -11,6 +10,10 @@ import uuid
 from pathlib import Path
 import json
 from datetime import datetime
+import base64
+import io
+import requests
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -92,6 +95,245 @@ def get_nist_categories() -> List[str]:
 audit_sessions = {}
 user_sessions = {}
 multi_category_sessions = {}
+
+# File processing functions
+def analyze_uploaded_files(files_data: List[dict]) -> Dict[str, Any]:
+    """Analyze different file types and extract content"""
+    extracted_text = ""
+    metadata = []
+    
+    for file_data in files_data:
+        file_info = {
+            "name": file_data.get('name', 'unknown'),
+            "type": file_data.get('type', 'unknown'),
+            "size": file_data.get('size', 0)
+        }
+        
+        try:
+            # Decode base64 content
+            content_bytes = base64.b64decode(file_data.get('content', ''))
+            
+            if file_data.get('type') == "application/pdf":
+                text = extract_pdf_content(content_bytes)
+                extracted_text += f"\n--- PDF: {file_info['name']} ---\n{text}\n"
+                
+            elif file_data.get('type') in ["image/png", "image/jpeg", "image/jpg"]:
+                text = extract_image_text(content_bytes)
+                extracted_text += f"\n--- Image: {file_info['name']} ---\n{text}\n"
+                
+            elif file_data.get('type') in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+                text = extract_excel_content(content_bytes)
+                extracted_text += f"\n--- Excel: {file_info['name']} ---\n{text}\n"
+                
+            elif file_data.get('type') == "text/plain":
+                text = content_bytes.decode('utf-8')
+                extracted_text += f"\n--- Text: {file_info['name']} ---\n{text}\n"
+                
+            elif file_data.get('type') == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                text = extract_docx_content(content_bytes)
+                extracted_text += f"\n--- Word: {file_info['name']} ---\n{text}\n"
+            else:
+                text = f"Unsupported file type: {file_data.get('type')}"
+                
+            file_info["content_length"] = len(text) if 'text' in locals() else 0
+            file_info["status"] = "processed"
+            
+        except Exception as e:
+            logger.error(f"Error processing file {file_info['name']}: {str(e)}")
+            file_info["status"] = f"error: {str(e)}"
+            
+        metadata.append(file_info)
+    
+    return {"extracted_text": extracted_text, "metadata": metadata}
+
+def extract_pdf_content(content_bytes: bytes) -> str:
+    """Extract text from PDF files"""
+    try:
+        import PyPDF2
+        pdf_file = io.BytesIO(content_bytes)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except ImportError:
+        return "PDF processing not available - PyPDF2 not installed"
+    except Exception as e:
+        return f"Error reading PDF: {str(e)}"
+
+def extract_image_text(content_bytes: bytes) -> str:
+    """Extract text from images using OCR"""
+    try:
+        import pytesseract
+        from PIL import Image
+        
+        image = Image.open(io.BytesIO(content_bytes))
+        text = pytesseract.image_to_string(image)
+        return text
+    except ImportError:
+        return "OCR not available - pytesseract not installed"
+    except Exception as e:
+        return f"Error processing image: {str(e)}"
+
+def extract_excel_content(content_bytes: bytes) -> str:
+    """Extract content from Excel files"""
+    try:
+        excel_file = io.BytesIO(content_bytes)
+        df_dict = pd.read_excel(excel_file, sheet_name=None)  # Read all sheets
+        content = ""
+        for sheet_name, sheet_df in df_dict.items():
+            content += f"\nSheet: {sheet_name}\n"
+            content += sheet_df.to_string() + "\n"
+        return content
+    except Exception as e:
+        return f"Error reading Excel: {str(e)}"
+
+def extract_docx_content(content_bytes: bytes) -> str:
+    """Extract content from Word documents"""
+    try:
+        from docx import Document
+        
+        doc_file = io.BytesIO(content_bytes)
+        doc = Document(doc_file)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
+    except ImportError:
+        return "Word document processing not available - python-docx not installed"
+    except Exception as e:
+        return f"Error reading Word document: {str(e)}"
+
+def analyze_urls(urls: List[str]) -> Dict[str, Any]:
+    """Analyze content from provided URLs"""
+    extracted_text = ""
+    metadata = []
+    
+    for url in urls:
+        if not url.strip():
+            continue
+            
+        url_info = {"url": url.strip()}
+        
+        try:
+            response = requests.get(url.strip(), timeout=10, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract title and main content
+                title = soup.find('title')
+                title_text = title.get_text() if title else "No title"
+                
+                # Remove script and style elements
+                for script in soup(["script", "style"]):
+                    script.decompose()
+                
+                text = soup.get_text()
+                # Clean up text
+                lines = (line.strip() for line in text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                clean_text = ' '.join(chunk for chunk in chunks if chunk)
+                
+                extracted_text += f"\n--- URL: {url} ---\nTitle: {title_text}\n{clean_text[:2000]}...\n"
+                
+                url_info.update({
+                    "status": "success",
+                    "title": title_text,
+                    "content_length": len(clean_text),
+                    "status_code": response.status_code
+                })
+            else:
+                url_info["status"] = f"HTTP {response.status_code}"
+                
+        except Exception as e:
+            logger.error(f"Error processing URL {url}: {str(e)}")
+            url_info["status"] = f"error: {str(e)}"
+            
+        metadata.append(url_info)
+    
+    return {"extracted_text": extracted_text, "metadata": metadata}
+
+def evaluate_file_evidence(file_metadata: List[dict]) -> float:
+    """Evaluate the quality and relevance of uploaded files"""
+    if not file_metadata:
+        return 0.0
+    
+    score = 0.0
+    for file_info in file_metadata:
+        # Bonus for successfully processed files
+        if file_info.get('status') == 'processed':
+            score += 0.3
+            
+        # Bonus for substantial content
+        if file_info.get('content_length', 0) > 100:
+            score += 0.2
+            
+        # File type relevance
+        file_type = file_info.get('type', '')
+        if any(doc_type in file_type for doc_type in ['pdf', 'excel', 'image', 'word']):
+            score += 0.1
+    
+    return min(score, 1.0)
+
+def evaluate_url_credibility(url_metadata: List[dict]) -> float:
+    """Evaluate the credibility and accessibility of provided URLs"""
+    if not url_metadata:
+        return 0.0
+    
+    score = 0.0
+    for url_info in url_metadata:
+        if url_info.get('status') == 'success':
+            score += 0.4
+            
+            # Bonus for substantial content
+            if url_info.get('content_length', 0) > 500:
+                score += 0.2
+                
+            # Credible domains bonus
+            url = url_info.get('url', '')
+            if any(domain in url for domain in ['.gov', '.edu', '.org', 'nist.gov']):
+                score += 0.3
+    
+    return min(score, 1.0)
+
+def evaluate_text_quality(text: str, baseline_evidence: str) -> float:
+    """Evaluate the quality of text evidence against baseline requirements"""
+    if not text or not baseline_evidence:
+        return 0.0
+    
+    text_lower = text.lower().strip()
+    baseline_lower = baseline_evidence.lower()
+    
+    # Extract meaningful words (length > 3)
+    text_words = set(
+        word.strip('.,!?()[]{}":;') 
+        for word in text_lower.split() 
+        if len(word) > 3
+    )
+    baseline_words = set(
+        word.strip('.,!?()[]{}":;') 
+        for word in baseline_lower.split() 
+        if len(word) > 3
+    )
+    
+    # Find audit-specific terms
+    audit_terms = text_words.intersection(AUDIT_KEYWORDS)
+    baseline_audit_terms = baseline_words.intersection(AUDIT_KEYWORDS)
+    
+    # Calculate scores
+    word_overlap = len(text_words.intersection(baseline_words))
+    audit_overlap = len(audit_terms.intersection(baseline_audit_terms))
+    
+    # Base score from word overlap
+    overlap_score = min(word_overlap / max(len(baseline_words), 5), 1.0) * 0.4
+    
+    # Audit terms score
+    audit_score = min(audit_overlap / max(len(baseline_audit_terms), 2), 1.0) * 0.6
+    
+    return overlap_score + audit_score
 
 class MultiCategoryAudit:
     """Clean multi-category audit state management"""
@@ -469,13 +711,173 @@ def submit_answer(session_id: str, answer: str) -> Dict[str, Any]:
         )
     }
 
-def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_ID) -> Dict[str, Any]:
-    """Submit evidence and get evaluation"""
+def evaluate_evidence_package(session: AuditSession, evidence_package: Dict[str, Any]) -> Dict[str, Any]:
+    """Enhanced evidence evaluation with files and URLs"""
+    current_q = session.get_current_question()
+    if not current_q:
+        return {"error": "No current question"}
+    
+    baseline_evidence = current_q['baseline_evidence']
+    
+    # Extract all evidence sources
+    text_evidence = evidence_package.get('text', '')
+    files_data = evidence_package.get('files', [])
+    urls = evidence_package.get('urls', [])
+    
+    # Process files and URLs
+    file_analysis = analyze_uploaded_files(files_data)
+    url_analysis = analyze_urls(urls)
+    
+    # Combine all text sources
+    all_text = f"{text_evidence}\n{file_analysis['extracted_text']}\n{url_analysis['extracted_text']}"
+    
+    # Enhanced scoring factors
+    factors = {
+        'text_quality': evaluate_text_quality(all_text, baseline_evidence),
+        'source_diversity': min(len(files_data) + len(urls) / 3, 1.0) * 0.2,  # Multiple sources bonus
+        'file_evidence': evaluate_file_evidence(file_analysis['metadata']),
+        'url_credibility': evaluate_url_credibility(url_analysis['metadata']),
+        'content_volume': min(len(all_text) / 1000, 1.0) * 0.15  # Substantial content bonus
+    }
+    
+    # Calculate weighted score
+    total_score = (
+        factors['text_quality'] * 0.4 +
+        factors['source_diversity'] +
+        factors['file_evidence'] * 0.15 +
+        factors['url_credibility'] * 0.1 +
+        factors['content_volume']
+    )
+    
+    # Enhanced conformity determination with multi-source analysis
+    evidence_sources_count = len(files_data) + len(urls) + (1 if text_evidence else 0)
+    content_length = len(all_text)
+    
+    # Extract meaningful audit terms from all content
+    all_text_lower = all_text.lower()
+    baseline_lower = baseline_evidence.lower()
+    
+    audit_terms = sum(1 for term in AUDIT_KEYWORDS if term in all_text_lower)
+    baseline_audit_terms = sum(1 for term in AUDIT_KEYWORDS if term in baseline_lower)
+    
+    # Enhanced thresholds considering multiple evidence sources
+    if total_score >= 0.85 and content_length >= 200 and evidence_sources_count >= 2:
+        conformity = "Full Conformity"
+        justification = generate_enhanced_justification(evidence_package, factors, file_analysis, url_analysis, "full")
+    elif total_score >= 0.65 and content_length >= 100:
+        conformity = "Partial Conformity" 
+        justification = generate_enhanced_justification(evidence_package, factors, file_analysis, url_analysis, "partial")
+    else:
+        conformity = "No Conformity"
+        justification = generate_enhanced_justification(evidence_package, factors, file_analysis, url_analysis, "none")
+    
+    return {
+        'question_idx': session.current_question_idx,
+        'evidence': text_evidence,
+        'conformity': conformity,
+        'justification': justification,
+        'baseline_evidence': baseline_evidence,
+        'evidence_analysis': {
+            'sources_analyzed': evidence_sources_count,
+            'total_content_length': content_length,
+            'files_processed': len(file_analysis['metadata']),
+            'urls_analyzed': len(url_analysis['metadata']),
+            'scoring_factors': factors,
+            'total_score': total_score,
+            'file_metadata': file_analysis['metadata'],
+            'url_metadata': url_analysis['metadata']
+        }
+    }
+
+def generate_enhanced_justification(evidence_package: Dict[str, Any], factors: Dict[str, float], 
+                                  file_analysis: Dict[str, Any], url_analysis: Dict[str, Any], 
+                                  level: str) -> str:
+    """Generate detailed justification for multi-source evidence evaluation"""
+    
+    files_count = len(evidence_package.get('files', []))
+    urls_count = len(evidence_package.get('urls', []))
+    has_text = bool(evidence_package.get('text', '').strip())
+    
+    # Count successful file processing
+    successful_files = sum(1 for f in file_analysis['metadata'] if f.get('status') == 'processed')
+    successful_urls = sum(1 for u in url_analysis['metadata'] if u.get('status') == 'success')
+    
+    if level == "full":
+        justification = (
+            f"Comprehensive evidence package demonstrates full compliance with baseline requirements. "
+            f"Analysis included: "
+        )
+        
+        sources = []
+        if has_text:
+            sources.append("detailed text description")
+        if successful_files > 0:
+            sources.append(f"{successful_files} successfully processed file(s)")
+        if successful_urls > 0:
+            sources.append(f"{successful_urls} accessible URL(s)")
+        
+        justification += ", ".join(sources) + ". "
+        
+        justification += (
+            f"Evidence quality score: {factors['text_quality']:.2f}, "
+            f"source diversity: {factors['source_diversity']:.2f}, "
+            f"file evidence: {factors['file_evidence']:.2f}. "
+            f"Documentation demonstrates substantial compliance measures."
+        )
+        
+    elif level == "partial":
+        justification = (
+            f"Evidence package shows partial compliance with baseline requirements. "
+            f"Submitted {files_count + urls_count + (1 if has_text else 0)} evidence source(s): "
+        )
+        
+        if successful_files < files_count:
+            justification += f"Some files could not be processed ({successful_files}/{files_count} files). "
+        if successful_urls < urls_count:
+            justification += f"Some URLs were inaccessible ({successful_urls}/{urls_count} URLs). "
+        
+        justification += (
+            f"Additional documentation or more detailed evidence needed for full compliance. "
+            f"Consider providing policy documents, implementation details, or verification screenshots."
+        )
+        
+    else:  # no conformity
+        justification = (
+            f"Evidence package does not adequately demonstrate compliance with baseline requirements. "
+        )
+        
+        issues = []
+        if files_count > successful_files:
+            issues.append(f"{files_count - successful_files} file(s) could not be processed")
+        if urls_count > successful_urls:
+            issues.append(f"{urls_count - successful_urls} URL(s) were inaccessible")
+        if not has_text and successful_files == 0 and successful_urls == 0:
+            issues.append("no substantive evidence provided")
+        
+        if issues:
+            justification += "Issues identified: " + ", ".join(issues) + ". "
+        
+        justification += (
+            f"Please provide comprehensive documentation including policies, procedures, "
+            f"implementation evidence, screenshots, or other substantive materials that "
+            f"demonstrate compliance with the specified baseline requirements."
+        )
+    
+    return justification
+
+def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_ID, evidence_package: Optional[Dict] = None) -> Dict[str, Any]:
+    """Submit evidence and get evaluation - now supports files and URLs"""
     if session_id not in audit_sessions:
         return {"error": "Invalid session ID"}
     
     session = audit_sessions[session_id]
-    evaluation = session.evaluate_evidence(evidence)
+    
+    # Handle evidence package (files + URLs + text)
+    if evidence_package:
+        evaluation = evaluate_evidence_package(session, evidence_package)
+    else:
+        # Traditional text-only evidence
+        evaluation = session.evaluate_evidence(evidence)
     
     # Move to next question
     session.move_to_next_question()
@@ -492,11 +894,7 @@ def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_
     if next_question:
         # Continue with next question in same category
         result["next_question"] = next_question
-        result["message"] = (
-            f"**Evidence Evaluation:**\n\n"
-            f"**Conformity Level:** {evaluation['conformity']}\n\n"
-            f"**Justification:** {evaluation['justification']}"
-        )
+        result["message"] = format_evaluation_message(evaluation)
         result["completed"] = False
     else:
         # Category completed - check if this is part of a multi-category audit
@@ -505,22 +903,16 @@ def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_
         if multi_audit:
             logger.info(f"Category '{session.category}' completed for multi-audit")
             
-            # FIXED: Mark current category as completed BEFORE checking completion status
+            # Mark current category as completed BEFORE checking completion status
             multi_audit.mark_current_completed()
             
-            # FIXED: Get updated progress tracking with correct completed count
+            # Get updated progress tracking with correct completed count
             updated_progress = multi_audit.get_progress_summary()
             
             if multi_audit.is_completed():
                 # All categories completed
                 result["action"] = "multi_audit_completed"
-                result["message"] = (
-                    f"**Evidence Evaluation:**\n\n"
-                    f"**Conformity Level:** {evaluation['conformity']}\n\n"
-                    f"**Justification:** {evaluation['justification']}\n\n"
-                    f"**Multi-Category Audit Completed!**\n\n"
-                    f"You have successfully completed all {len(multi_audit.categories)} categories!"
-                )
+                result["message"] = format_completion_message(evaluation, multi_audit)
                 result["multi_audit_summary"] = updated_progress
                 result["completed"] = True
                 result["show_results_button"] = True
@@ -528,32 +920,86 @@ def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_
                 # More categories to go - show transition option
                 next_category = multi_audit.get_next_category()
                 result["action"] = "category_completed_multi"
-                result["message"] = (
-                    f"**Evidence Evaluation:**\n\n"
-                    f"**Conformity Level:** {evaluation['conformity']}\n\n"
-                    f"**Justification:** {evaluation['justification']}\n\n"
-                    f"**Category '{session.category}' Completed!**\n\n"
-                    f"Next category: **{next_category}**\n\n"
-                    f"Use the 'Continue to Next Category' button in the sidebar."
-                )
+                result["message"] = format_transition_message(evaluation, session.category, next_category)
                 result["multi_audit_progress"] = updated_progress
                 result["next_category"] = next_category
                 result["completed"] = False
                 result["needs_transition"] = True
         else:
             # Single category audit completed
-            result["message"] = (
-                f"**Evidence Evaluation:**\n\n"
-                f"**Conformity Level:** {evaluation['conformity']}\n\n"
-                f"**Justification:** {evaluation['justification']}\n\n"
-                f"**Audit Completed!**\n\n"
-                f"You have successfully completed the NIST AI RMF audit for **{session.category}**."
-            )
+            result["message"] = format_single_completion_message(evaluation, session.category)
             result["status"] = "completed"
             result["completed"] = True
             result["show_results_button"] = True
     
     return result
+
+def format_evaluation_message(evaluation: Dict[str, Any]) -> str:
+    """Format evaluation message with enhanced details"""
+    conformity = evaluation.get('conformity', 'Unknown')
+    justification = evaluation.get('justification', '')
+    
+    # Check if this is an enhanced evaluation with evidence analysis
+    evidence_analysis = evaluation.get('evidence_analysis')
+    if evidence_analysis:
+        sources_count = evidence_analysis.get('sources_analyzed', 0)
+        files_count = evidence_analysis.get('files_processed', 0)
+        urls_count = evidence_analysis.get('urls_analyzed', 0)
+        
+        message = (
+            f"**Enhanced Evidence Evaluation:**\n\n"
+            f"**Conformity Level:** {conformity}\n\n"
+            f"**Evidence Sources Analyzed:** {sources_count} (Files: {files_count}, URLs: {urls_count})\n\n"
+            f"**Justification:** {justification}"
+        )
+    else:
+        message = (
+            f"**Evidence Evaluation:**\n\n"
+            f"**Conformity Level:** {conformity}\n\n"
+            f"**Justification:** {justification}"
+        )
+    
+    return message
+
+def format_completion_message(evaluation: Dict[str, Any], multi_audit) -> str:
+    """Format completion message for multi-audit"""
+    conformity = evaluation.get('conformity', 'Unknown')
+    justification = evaluation.get('justification', '')
+    
+    return (
+        f"**Evidence Evaluation:**\n\n"
+        f"**Conformity Level:** {conformity}\n\n"
+        f"**Justification:** {justification}\n\n"
+        f"**Multi-Category Audit Completed!**\n\n"
+        f"You have successfully completed all {len(multi_audit.categories)} categories!"
+    )
+
+def format_transition_message(evaluation: Dict[str, Any], current_category: str, next_category: str) -> str:
+    """Format transition message between categories"""
+    conformity = evaluation.get('conformity', 'Unknown')
+    justification = evaluation.get('justification', '')
+    
+    return (
+        f"**Evidence Evaluation:**\n\n"
+        f"**Conformity Level:** {conformity}\n\n"
+        f"**Justification:** {justification}\n\n"
+        f"**Category '{current_category}' Completed!**\n\n"
+        f"Next category: **{next_category}**\n\n"
+        f"Use the 'Continue to Next Category' button in the sidebar."
+    )
+
+def format_single_completion_message(evaluation: Dict[str, Any], category: str) -> str:
+    """Format completion message for single category audit"""
+    conformity = evaluation.get('conformity', 'Unknown')
+    justification = evaluation.get('justification', '')
+    
+    return (
+        f"**Evidence Evaluation:**\n\n"
+        f"**Conformity Level:** {conformity}\n\n"
+        f"**Justification:** {justification}\n\n"
+        f"**Audit Completed!**\n\n"
+        f"You have successfully completed the NIST AI RMF audit for **{category}**."
+    )
 
 def start_multi_category_audit(categories: List[str], user_id: str = DEFAULT_USER_ID) -> Dict[str, Any]:
     """Start a multi-category audit session"""
@@ -903,6 +1349,21 @@ def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any
     
     logger.info(f"Processing message: '{message}' for user: {user_id}")
     
+    # Check for evidence package submission
+    if message == "EVIDENCE_PACKAGE_SUBMISSION" or "EVIDENCE_PACKAGE" in message:
+        logger.info("Detected evidence package submission")
+        # Extract evidence package from context or message parts
+        evidence_package = context.get('evidence_package')
+        if evidence_package:
+            # Find active session
+            active_session_id = user_sessions.get(user_id)
+            if active_session_id and active_session_id in audit_sessions:
+                return submit_evidence(active_session_id, "", user_id, evidence_package)
+            else:
+                return {"error": "No active audit session found for evidence submission"}
+        else:
+            return {"error": "No evidence package data found"}
+    
     # Check for assessment generation request
     if any(keyword in message_lower for keyword in ["generate assessment", "assessment", "results", "report"]):
         logger.info("Detected assessment generation request")
@@ -1035,12 +1496,14 @@ def get_capabilities() -> Dict[str, Any]:
         "capabilities": [
             "NIST AI RMF Category Selection",
             "Structured Audit Questioning",
-            "STRICT Evidence Evaluation with High Standards",
-            "Accurate Conformity Assessment",
+            "ENHANCED Evidence Evaluation with Multi-Source Analysis",
+            "File Processing (PDF, Images with OCR, Excel, Word, Text)",
+            "URL Content Analysis and Credibility Assessment",
+            "Accurate Conformity Assessment with Evidence Package Support",
             "Audit Progress Tracking",
             "Multi-Category Sequential Audits with Manual Transitions",
             "AI-Powered Assessment Generation with Professional Analytics",
-            "Comprehensive Risk Analysis and Recommendations"
+            "Comprehensive Risk Analysis and Tailored Recommendations"
         ],
         "actions": [
             "get_categories",
@@ -1048,13 +1511,14 @@ def get_capabilities() -> Dict[str, Any]:
             "get_current_question",
             "submit_answer",
             "submit_evidence",
+            "submit_evidence_package",
             "start_multi_category_audit",
             "continue_to_next_category",
             "generate_assessment"
         ]
     }
 
-# Update the agent.py file to include assessment generation
+
 def audit_tool(message: str = "", category: str = "", **kwargs):
     """NIST AI RMF Audit Tool for conducting structured security assessments with AI-powered assessment generation."""
     print(f"DEBUG audit_tool: message='{message}', category='{category}', kwargs={kwargs}")
@@ -1063,19 +1527,54 @@ def audit_tool(message: str = "", category: str = "", **kwargs):
     if not message:
         return _get_help()
    
-    # ALWAYS route through process_chat_message for proper multi-category detection and assessment generation
+    # Check if this is an encoded evidence package submission
+    if message.startswith("EVIDENCE_PACKAGE:"):
+        try:
+            # Extract the JSON evidence package from the message
+            evidence_json = message[len("EVIDENCE_PACKAGE:"):]
+            evidence_package = json.loads(evidence_json)
+            
+            print(f"DEBUG: Decoded evidence package successfully")
+            print(f"DEBUG: Evidence package has {len(evidence_package.get('files', []))} files")
+            print(f"DEBUG: Evidence package has {len(evidence_package.get('urls', []))} URLs")
+            print(f"DEBUG: Evidence package text length: {len(evidence_package.get('text', ''))}")
+            
+            # Route evidence package through process_chat_message with proper context
+            context = {
+                'user_id': "clyde",
+                'evidence_package': evidence_package
+            }
+            result = process_chat_message("EVIDENCE_PACKAGE_SUBMISSION", context)
+            print(f"DEBUG: Evidence package processing result: {result.get('action', 'unknown')}")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to decode evidence package JSON: {e}")
+            return {"error": "Failed to decode evidence package - invalid JSON format"}
+        except Exception as e:
+            print(f"ERROR: Unexpected error processing evidence package: {e}")
+            return {"error": f"Error processing evidence package: {str(e)}"}
+   
+    # ALWAYS route through process_chat_message for other messages
     context = {'user_id': "clyde"}
    
     print(f"DEBUG: Calling process_chat_message with message='{message}'")
     result = process_chat_message(message, context)
-    print(f"DEBUG: Got result: {result}")
+    print(f"DEBUG: Got result with action: {result.get('action', 'unknown')}")
     return result
+  
 
 def _get_help():
     """Returns the help message for the agent."""
     return {
         "action": "help",
-        "message": "I'm here to help you conduct a NIST AI RMF audit. Please select one of the 7 categories to begin:\n\n" +
+        "message": "I'm here to help you conduct a NIST AI RMF audit with enhanced evidence processing capabilities. Please select one of the 7 categories to begin:\n\n" +
                    "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
-                   "\n\nWhich category would you like to audit?"
+                   "\n\nYou can now submit evidence in multiple formats:\n" +
+                   "• Text descriptions\n" +
+                   "• PDF documents\n" +
+                   "• Images (with OCR text extraction)\n" +
+                   "• Excel spreadsheets\n" +
+                   "• Word documents\n" +
+                   "• URLs to online documentation\n\n" +
+                   "Which category would you like to audit?"
     }

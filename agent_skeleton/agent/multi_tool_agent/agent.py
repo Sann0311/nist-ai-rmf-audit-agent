@@ -131,17 +131,13 @@
 
 # agent_skeleton/agent/multi_tool_agent/agent.py
 
+# agent_skeleton/agent/multi_tool_agent/agent.py
+
+# Suppress import warnings by using try-catch blocks
 try:
     from google.adk.agents import LlmAgent  
     from google.adk.models.lite_llm import LiteLlm  
     from google.genai import types  
-    from .tool import (
-        run_tool,
-        get_capabilities,
-        start_audit_session,
-        process_chat_message,
-        get_nist_categories,
-    )
     ADK_AVAILABLE = True
 except ImportError as e:
     print(f"Google ADK not available: {e}")
@@ -149,7 +145,18 @@ except ImportError as e:
     LlmAgent = None
     LiteLlm = None
     types = None
-    # Define dummy functions if ADK is not available
+
+# Import our tool functions
+try:
+    from .tool import (
+        run_tool,
+        get_capabilities,
+        start_audit_session,
+        process_chat_message,
+        get_nist_categories,
+    )
+except ImportError:
+    # Define dummy functions if tools are not available
     def run_tool(*args, **kwargs):
         return {}
     def get_capabilities(*args, **kwargs):
@@ -188,6 +195,19 @@ def audit_tool(message: str = "", category: str = "", **kwargs):
     # If no message, show help
     if not message:
         return _get_help()
+   
+    # Check if this is an evidence package submission
+    evidence_package = kwargs.get('evidence_package')
+    if evidence_package or message == "EVIDENCE_PACKAGE":
+        # Route evidence package through process_chat_message with proper context
+        context = {
+            'user_id': "clyde",
+            'evidence_package': evidence_package
+        }
+        print(f"DEBUG: Processing evidence package with context: {context}")
+        result = process_chat_message("EVIDENCE_PACKAGE_SUBMISSION", context)
+        print(f"DEBUG: Evidence package result: {result}")
+        return result
    
     # ALWAYS route through process_chat_message for proper multi-category detection and assessment generation
     context = {'user_id': "clyde"}
@@ -240,30 +260,10 @@ For EVERY user message, you MUST call the audit_tool() function. NEVER respond w
 **ADVANCED FEATURES:**
 - **Multi-Category Support**: Sequential auditing across multiple NIST categories with smooth transitions
 - **AI-Powered Assessment Generation**: Comprehensive compliance analysis with personalized recommendations
+- **Enhanced Evidence Processing**: Support for files, images, documents, and URLs
 - **Risk Analysis**: Automatic identification of high-risk areas with priority-based action items
 - **Interactive Progress Tracking**: Real-time progress updates with visual indicators
 - **Professional Reporting**: Export capabilities for compliance documentation
-
-**ASSESSMENT CAPABILITIES:**
-- **Overall Compliance Scoring**: Calculate weighted compliance scores across all audited categories
-- **Risk Level Determination**: Automatic risk classification (Low/Medium/High) based on audit results
-- **Category-Specific Analysis**: Detailed breakdown of strengths and weaknesses per NIST category
-- **Tailored Recommendations**: AI-generated action items specific to identified gaps
-- **Priority-Based Action Plans**: Organized recommendations by urgency and impact
-
-**CONVERSATION MANAGEMENT:**
-- Always maintain context across multi-category audits
-- Provide clear guidance for evidence requirements
-- Offer helpful transitions between audit phases  
-- Generate comprehensive summaries upon completion
-- Support both single and multi-category audit workflows
-
-**QUALITY STANDARDS:**
-- Ensure all evidence evaluations are thorough and justified
-- Provide specific, actionable feedback for each submission
-- Maintain consistency in conformity assessments
-- Generate professional-grade compliance reports
-- Support continuous improvement recommendations
 
 Remember: Your role is to be a knowledgeable, helpful audit assistant that guides users through comprehensive NIST AI RMF assessments while generating valuable insights for improving their AI governance posture.""",
             tools=[audit_tool],

@@ -6,6 +6,9 @@ import httpx
 import os
 import json
 import re
+import base64
+
+
 
 app = FastAPI()
 
@@ -26,140 +29,133 @@ async def get_health():
 async def get_status():
     return {"message": "NIST AI RMF Audit Agent Backend - OK"}
 
+def parse_agent_response_enhanced(response):
+    """Enhanced response parsing for agent responses"""
+    try:
+        # Handle array responses
+        if isinstance(response, list) and len(response) > 0:
+            for message in reversed(response):
+                if isinstance(message, dict) and "content" in message:
+                    content = message["content"]
+                    if "parts" in content:
+                        for part in content["parts"]:
+                            if "functionResponse" in part:
+                                func_response = part["functionResponse"]
+                                if "response" in func_response:
+                                    return func_response["response"]
+                            elif "text" in part:
+                                text_content = part["text"]
+                                try:
+                                    return json.loads(text_content)
+                                except json.JSONDecodeError:
+                                    return {"message": text_content, "action": "text_response"}
+            return response[-1] if response else None
+        
+        # Handle dict responses
+        elif isinstance(response, dict):
+            if "content" in response:
+                return parse_agent_response_enhanced([response])
+            elif "message" in response:
+                return response
+            elif "response" in response:
+                return response["response"]
+            else:
+                return response
+        
+        return {"message": str(response), "action": "unknown"}
+        
+    except Exception as e:
+        print(f"Error parsing response: {e}")
+        return {"message": f"Parse error: {e}", "action": "error"}
+
 @app.post("/api/run")
 async def run_agent(request: dict):
     try:
-        print(f"🔍 DEBUG BACKEND: Received request: {request}")
+        print(f"🔍 DEBUG BACKEND: Received request")
        
-        # Handle frontend request format - extract text from newMessage.parts
+        # Handle frontend request format - extract text and evidence package
         user_message = ""
+        evidence_package = None
+        
         if "newMessage" in request and "parts" in request["newMessage"]:
             for part in request["newMessage"]["parts"]:
                 if "text" in part:
                     user_message = part["text"]
+                if "evidence_package" in part:
+                    evidence_package = part["evidence_package"]
+                    print(f"🔍 DEBUG BACKEND: Found evidence package")
+                    print(f"  - Text: '{evidence_package.get('text', '')}'")
+                    print(f"  - Files: {len(evidence_package.get('files', []))}")
+                    print(f"  - URLs: {len(evidence_package.get('urls', []))}")
                     break
-       
-        print(f"🔍 DEBUG BACKEND: Extracted user_message: '{user_message}'")
        
         # Fallback to direct message field
         if not user_message:
             user_message = request.get("message", "")
+            print(f"🔍 DEBUG BACKEND: Using fallback message: {user_message}")
        
         user_id = request.get("userId", "clyde")
         session_id = request.get("sessionId", "web_session")
         app_name = "nist_ai_rmf_audit_agent"
        
-        print(f"🔍 DEBUG BACKEND: Final user_message: '{user_message}', user_id: '{user_id}'")
-       
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Format payload for Google ADK API (proper Content format)
-            payload = {
-                "appName": app_name,
-                "userId": user_id,
-                "sessionId": session_id,
-                "newMessage": {
-                    "parts": [
-                        {
-                            "text": user_message  # Pass the original message unchanged
-                        }
-                    ],
-                    "role": "user"
-                },
-                "streaming": False
-            }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            if evidence_package:
+                # Format evidence package as a special message that includes the package data
+                evidence_message = f"EVIDENCE_PACKAGE:{json.dumps(evidence_package)}"
+                payload = {
+                    "appName": app_name,
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "newMessage": {
+                        "parts": [{"text": evidence_message}],
+                        "role": "user"
+                    },
+                    "streaming": False
+                }
+                print(f"🔍 DEBUG BACKEND: Sending evidence package as encoded message")
+            else:
+                # Regular message
+                payload = {
+                    "appName": app_name,
+                    "userId": user_id,
+                    "sessionId": session_id,
+                    "newMessage": {
+                        "parts": [{"text": user_message}],
+                        "role": "user"
+                    },
+                    "streaming": False
+                }
+            
+            print(f"🔍 DEBUG BACKEND: Sending to agent...")
+            response = await client.post(f"{ADK_API_URL}/run", json=payload)
            
-            print(f"🔍 DEBUG BACKEND: Sending to ADK: {payload}")
-           
-            # Use the correct Google ADK /run endpoint
-            response = await client.post(
-                f"{ADK_API_URL}/run",
-                json=payload
-            )
-           
-            print(f"🔍 DEBUG BACKEND: ADK Response status: {response.status_code}")
-            print(f"🔍 DEBUG BACKEND: ADK Response: {response.text}")
+            print(f"🔍 DEBUG BACKEND: Agent response status: {response.status_code}")
            
             if response.status_code == 200:
                 result = response.json()
-                print(f"🔍 DEBUG BACKEND: Parsed result: {result}")
-               
-                # Handle Google ADK response format - it returns an array of message objects
-                if isinstance(result, list) and len(result) > 0:
-                    # Look for the latest message with function response (tool result)
-                    for message in reversed(result):
-                        if isinstance(message, dict) and "content" in message:
-                            content = message["content"]
-                            if "parts" in content:
-                                for part in content["parts"]:
-                                    # Check for function response with tool result
-                                    if "functionResponse" in part:
-                                        func_response = part["functionResponse"]
-                                        if "response" in func_response:
-                                            tool_result = func_response["response"]
-                                            print(f"🔍 DEBUG BACKEND: Found tool result: {tool_result}")
-                                            # Return the complete tool result for frontend parsing
-                                            return {"content": tool_result, "success": True}
-                                    # Check for plain text responses
-                                    elif "text" in part:
-                                        text_content = part["text"]
-                                        print(f"🔍 DEBUG BACKEND: Found text content: {text_content}")
-                                        # Try to parse if it's JSON
-                                        try:
-                                            json_content = json.loads(text_content)
-                                            print(f"🔍 DEBUG BACKEND: Parsed JSON content: {json_content}")
-                                            return {"content": json_content, "success": True}
-                                        except json.JSONDecodeError:
-                                            print(f"🔍 DEBUG BACKEND: Plain text response: {text_content}")
-                                            return {"content": text_content, "success": True}
-                   
-                    # Fallback - return the complete last message for frontend parsing
-                    if result and len(result) > 0:
-                        print(f"🔍 DEBUG BACKEND: Using fallback - last message: {result[-1]}")
-                        return {"content": result[-1], "success": True}
-               
-                # Handle single object format
-                elif isinstance(result, dict):
-                    # Check for Google ADK response format
-                    if "content" in result:
-                        print(f"🔍 DEBUG BACKEND: Single object with content: {result['content']}")
-                        return {"content": result["content"], "success": True}
-                    elif "message" in result:
-                        print(f"🔍 DEBUG BACKEND: Single object with message: {result['message']}")
-                        return {"content": result["message"], "success": True}
-                    elif "response" in result:
-                        print(f"🔍 DEBUG BACKEND: Single object with response: {result['response']}")
-                        return {"content": result["response"], "success": True}
-                    # Check for tool call results
-                    elif "toolCalls" in result and result["toolCalls"]:
-                        tool_result = result["toolCalls"][0].get("result", {})
-                        if isinstance(tool_result, dict) and "message" in tool_result:
-                            print(f"🔍 DEBUG BACKEND: Tool call with message: {tool_result['message']}")
-                            return {"content": tool_result["message"], "success": True}
-                        else:
-                            print(f"🔍 DEBUG BACKEND: Tool call result: {tool_result}")
-                            return {"content": str(tool_result), "success": True}
-                    else:
-                        print(f"🔍 DEBUG BACKEND: Direct single object: {result}")
-                        return {"content": str(result), "success": True}
+                print(f"🔍 DEBUG BACKEND: Processing agent response...")
+                
+                parsed_content = parse_agent_response_enhanced(result)
+                
+                if parsed_content:
+                    return {"content": parsed_content, "success": True}
                 else:
-                    print(f"🔍 DEBUG BACKEND: Unknown format, converting to string: {result}")
-                    return {"content": str(result), "success": True}
+                    return {"content": {"message": "No response from agent", "action": "error"}, "success": False}
             else:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Agent request failed: {response.text}"
-                )
+                error_message = f"Agent request failed with status {response.status_code}: {response.text}"
+                print(f"🔍 DEBUG BACKEND: {error_message}")
+                return {"error": error_message, "success": False}
                
     except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Agent request timed out")
+        print(f"🔍 DEBUG BACKEND: Request timeout")
+        return {"error": "Agent request timed out", "success": False}
     except httpx.RequestError as e:
-        print(f"Request error: {e}")
-        raise HTTPException(status_code=503, detail=f"Could not connect to agent: {str(e)}")
+        print(f"🔍 DEBUG BACKEND: Request error: {e}")
+        return {"error": f"Could not connect to agent: {str(e)}", "success": False}
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        print(f"🔍 DEBUG BACKEND: Unexpected error: {e}")
+        return {"error": f"Backend error: {str(e)}", "success": False}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
-
