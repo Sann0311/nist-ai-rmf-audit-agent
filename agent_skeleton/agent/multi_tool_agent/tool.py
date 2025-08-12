@@ -1,5 +1,4 @@
-#tool.py 
-
+# agent_skeleton/agent/multi_tool_agent/tool.py
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import pandas as pd
@@ -384,7 +383,7 @@ class MultiCategoryAudit:
         return self.categories[self.current_index + 1:]
     
     def get_progress_summary(self) -> Dict[str, Any]:
-        """FIXED: Get progress summary with correct completion tracking"""
+        """Get progress summary with correct completion tracking"""
         progress = {
             'total_categories': len(self.categories),
             'completed_count': len(self.completed_categories),
@@ -568,7 +567,7 @@ class AuditSession:
             self.state = "waiting_for_question_answer"
     
     def get_progress(self):
-        """FIXED: Get audit progress with proper current question tracking"""
+        """Get audit progress with proper current question tracking"""
         return {
             'current': min(self.current_question_idx + 1, len(self.questions)),
             'total': len(self.questions),
@@ -724,12 +723,17 @@ def evaluate_evidence_package(session: AuditSession, evidence_package: Dict[str,
     files_data = evidence_package.get('files', [])
     urls = evidence_package.get('urls', [])
     
+    logger.info(f"Evaluating evidence package: text_len={len(text_evidence)}, files={len(files_data)}, urls={len(urls)}")
+    
     # Process files and URLs
     file_analysis = analyze_uploaded_files(files_data)
     url_analysis = analyze_urls(urls)
     
     # Combine all text sources
     all_text = f"{text_evidence}\n{file_analysis['extracted_text']}\n{url_analysis['extracted_text']}"
+    
+    logger.info
+    logger.info(f"Combined text length: {len(all_text)}")
     
     # Enhanced scoring factors
     factors = {
@@ -770,6 +774,8 @@ def evaluate_evidence_package(session: AuditSession, evidence_package: Dict[str,
     else:
         conformity = "No Conformity"
         justification = generate_enhanced_justification(evidence_package, factors, file_analysis, url_analysis, "none")
+    
+    logger.info(f"Evidence evaluation result: {conformity} (score: {total_score:.2f})")
     
     return {
         'question_idx': session.current_question_idx,
@@ -874,10 +880,15 @@ def submit_evidence(session_id: str, evidence: str, user_id: str = DEFAULT_USER_
     
     # Handle evidence package (files + URLs + text)
     if evidence_package:
+        logger.info(f"Processing evidence package with {len(evidence_package.get('files', []))} files and {len(evidence_package.get('urls', []))} URLs")
         evaluation = evaluate_evidence_package(session, evidence_package)
     else:
         # Traditional text-only evidence
         evaluation = session.evaluate_evidence(evidence)
+    
+    # Check for evaluation error
+    if "error" in evaluation:
+        return evaluation
     
     # Move to next question
     session.move_to_next_question()
@@ -1343,26 +1354,37 @@ def generate_recommendations(assessment_data: Dict[str, Any]) -> List[Dict[str, 
     return recommendations
 
 def process_chat_message(message: str, context: Dict[str, Any]) -> Dict[str, Any]:
-    """Process a conversational message and determine the appropriate action"""
+    """FIXED: Process a conversational message and determine the appropriate action"""
     message_lower = message.lower()
     user_id = context.get('user_id', DEFAULT_USER_ID)
     
     logger.info(f"Processing message: '{message}' for user: {user_id}")
     
-    # Check for evidence package submission
-    if message == "EVIDENCE_PACKAGE_SUBMISSION" or "EVIDENCE_PACKAGE" in message:
+    # PRIORITY: Check for evidence package submission FIRST
+    evidence_package = context.get('evidence_package')
+    if evidence_package or message == "EVIDENCE_PACKAGE_SUBMISSION" or "EVIDENCE_PACKAGE" in message:
         logger.info("Detected evidence package submission")
-        # Extract evidence package from context or message parts
-        evidence_package = context.get('evidence_package')
+        
         if evidence_package:
             # Find active session
             active_session_id = user_sessions.get(user_id)
             if active_session_id and active_session_id in audit_sessions:
+                logger.info(f"Submitting evidence package to session: {active_session_id}")
+                logger.info(f"Evidence package contents: files={len(evidence_package.get('files', []))}, urls={len(evidence_package.get('urls', []))}, text_len={len(evidence_package.get('text', ''))}")
+                
                 return submit_evidence(active_session_id, "", user_id, evidence_package)
             else:
-                return {"error": "No active audit session found for evidence submission"}
+                logger.error(f"No active audit session found for user {user_id}")
+                return {
+                    "action": "error",
+                    "message": "No active audit session found. Please start an audit first."
+                }
         else:
-            return {"error": "No evidence package data found"}
+            logger.error("Evidence package data not found in context")
+            return {
+                "action": "error", 
+                "message": "No evidence package data found in context"
+            }
     
     # Check for assessment generation request
     if any(keyword in message_lower for keyword in ["generate assessment", "assessment", "results", "report"]):
@@ -1518,14 +1540,41 @@ def get_capabilities() -> Dict[str, Any]:
         ]
     }
 
+def _get_help():
+    """Returns the help message for the agent."""
+    return {
+        "action": "help",
+        "message": "I'm here to help you conduct a NIST AI RMF audit with enhanced evidence processing capabilities. Please select one of the 7 categories to begin:\n\n" +
+                   "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
+                   "\n\nYou can now submit evidence in multiple formats:\n" +
+                   "• Text descriptions\n" +
+                   "• PDF documents\n" +
+                   "• Images (with OCR text extraction)\n" +
+                   "• Excel spreadsheets\n" +
+                   "• Word documents\n" +
+                   "• URLs to online documentation\n\n" +
+                   "Which category would you like to audit?"
+    }
 
 def audit_tool(message: str = "", category: str = "", **kwargs):
-    """NIST AI RMF Audit Tool for conducting structured security assessments with AI-powered assessment generation."""
+    """FIXED: NIST AI RMF Audit Tool for conducting structured security assessments with AI-powered assessment generation."""
     print(f"DEBUG audit_tool: message='{message}', category='{category}', kwargs={kwargs}")
    
     # If no message, show help
     if not message:
         return _get_help()
+   
+    # PRIORITY: Check for evidence package in kwargs FIRST
+    evidence_package = kwargs.get('evidence_package')
+    if evidence_package:
+        print(f"DEBUG: Found evidence package in kwargs with {len(evidence_package.get('files', []))} files")
+        context = {
+            'user_id': "clyde",
+            'evidence_package': evidence_package
+        }
+        result = process_chat_message("EVIDENCE_PACKAGE_SUBMISSION", context)
+        print(f"DEBUG: Evidence package kwargs result: {result.get('action', 'unknown')}")
+        return result
    
     # Check if this is an encoded evidence package submission
     if message.startswith("EVIDENCE_PACKAGE:"):
@@ -1560,21 +1609,6 @@ def audit_tool(message: str = "", category: str = "", **kwargs):
     print(f"DEBUG: Calling process_chat_message with message='{message}'")
     result = process_chat_message(message, context)
     print(f"DEBUG: Got result with action: {result.get('action', 'unknown')}")
-    return result
-  
+    return result#tool.py 
 
-def _get_help():
-    """Returns the help message for the agent."""
-    return {
-        "action": "help",
-        "message": "I'm here to help you conduct a NIST AI RMF audit with enhanced evidence processing capabilities. Please select one of the 7 categories to begin:\n\n" +
-                   "\n".join([f"• {cat}" for cat in get_nist_categories()]) +
-                   "\n\nYou can now submit evidence in multiple formats:\n" +
-                   "• Text descriptions\n" +
-                   "• PDF documents\n" +
-                   "• Images (with OCR text extraction)\n" +
-                   "• Excel spreadsheets\n" +
-                   "• Word documents\n" +
-                   "• URLs to online documentation\n\n" +
-                   "Which category would you like to audit?"
-    }
+

@@ -1,3 +1,4 @@
+
 #frontend_streamlit.py
 import streamlit as st
 import streamlit.components.v1 as components
@@ -36,7 +37,7 @@ def initialize_session_state():
         'multi_audit_progress': None,
         'show_results': False,
         'assessment_data': None,
-        'chat_input_key': 0  # For forcing input refresh
+        'chat_submission_id': 0
     }
     
     for key, default_value in defaults.items():
@@ -219,101 +220,7 @@ def render_results_dashboard():
     
     st.markdown("---")
     
-    # Custom CSS for better styling
-    st.markdown("""
-    <style>
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 4px solid #007bff;
-        margin: 10px 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .risk-card {
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 4px solid;
-    }
-    .risk-high { border-left-color: #dc3545; background-color: #f8d7da; }
-    .risk-medium { border-left-color: #ffc107; background-color: #fff3cd; }
-    .risk-low { border-left-color: #28a745; background-color: #d4edda; }
-    .strength-card {
-        background-color: #d4edda;
-        border-left: 4px solid #28a745;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 10px 0;
-    }
-    .compliance-box {
-        text-align: center;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 10px;
-        color: white;
-        font-weight: bold;
-    }
-    .full-compliance { background: linear-gradient(135deg, #28a745, #20c997); }
-    .partial-compliance { background: linear-gradient(135deg, #ffc107, #fd7e14); }
-    .no-compliance { background: linear-gradient(135deg, #dc3545, #e83e8c); }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Header with gradient background
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                padding: 30px; border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white; text-align: center; margin: 0;">
-            NIST AI RMF Audit Results Dashboard
-        </h1>
-        <p style="color: #e8e8e8; text-align: center; margin: 10px 0 0 0; font-size: 18px;">
-            Comprehensive Security Posture Assessment
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Key Metrics Row
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        score = assessment['overall_compliance_score']
-        delta = score - 80
-        st.metric(
-            "Overall Compliance Score",
-            f"{score}%",
-            delta=f"{delta:+.1f}% vs Target (80%)",
-            delta_color="normal" if delta >= 0 else "inverse"
-        )
-    
-    with col2:
-        risk_level = assessment['risk_level']
-        risk_color = assessment['risk_color']
-        st.markdown(f"""
-        <div class="metric-card" style="border-left-color: {risk_color};">
-            <h3 style="margin: 0; color: #333;">Risk Level</h3>
-            <h1 style="color: {risk_color}; margin: 5px 0; font-size: 2.5em;">{risk_level}</h1>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        categories_count = len(assessment['categories_audited'])
-        st.metric(
-            "Categories Audited",
-            f"{categories_count}/7",
-            delta=f"{categories_count} completed",
-            delta_color="normal"
-        )
-    
-    with col4:
-        st.metric(
-            "Total Evaluations",
-            assessment['total_evaluations'],
-            delta=f"{assessment['total_questions']} questions",
-            delta_color="normal"
-        )
-    
-    # Show more dashboard content (you can expand this as needed)
+    # Show dashboard content
     st.markdown("### Compliance Distribution")
     st.info("Dashboard content continues here...")
 
@@ -718,7 +625,7 @@ def reset_audit_session():
     st.session_state.multi_audit_progress = None
     st.session_state.show_results = False
     st.session_state.assessment_data = None
-    st.session_state.chat_input_key += 1  # Force input refresh
+    st.session_state.chat_submission_id += 1
     st.success("**Audit session reset successfully!**")
     st.rerun()
 
@@ -863,149 +770,8 @@ def start_single_category_audit(category: str):
         error_msg = response.get('error', 'Unknown error')
         st.error(f"**Failed to start audit:** {error_msg}")
 
-def render_chatgpt_style_input():
-    """Render improved ChatGPT-style input using native Streamlit components"""
-    
-    # Create the unified input interface using columns for layout
-    st.markdown("""
-    <style>
-    .unified-input-container {
-        background: white;
-        border: 2px solid #e5e7eb;
-        border-radius: 24px;
-        padding: 8px;
-        margin: 20px 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .attachment-indicators {
-        margin-bottom: 8px;
-        min-height: 24px;
-    }
-    .attachment-badge {
-        display: inline-flex;
-        align-items: center;
-        background-color: #e3f2fd;
-        border: 1px solid #90caf9;
-        border-radius: 12px;
-        padding: 4px 12px;
-        margin: 2px 4px 2px 0;
-        font-size: 12px;
-        color: #1976d2;
-        font-weight: 500;
-    }
-    .url-badge {
-        background-color: #f3e5f5;
-        border-color: #ce93d8;
-        color: #7b1fa2;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Attachment indicators
-    attachment_html = ""
-    show_files = st.session_state.get('show_file_uploader', False)
-    show_urls = st.session_state.get('show_url_input', False)
-    
-    # File upload section (collapsible)
-    if show_files:
-        uploaded_files = st.file_uploader(
-            "Attach evidence files:",
-            type=['pdf', 'png', 'jpg', 'jpeg', 'xlsx', 'xls', 'docx', 'txt'],
-            accept_multiple_files=True,
-            key=f"chat_files_{st.session_state.chat_input_key}",
-            help="PDF, Images, Excel, Word, or Text files"
-        )
-        
-        if uploaded_files:
-            for file in uploaded_files:
-                attachment_html += f'<span class="attachment-badge">📄 {file.name}</span>'
-    else:
-        uploaded_files = None
-    
-    # URL input section (collapsible)
-    if show_urls:
-        urls_input = st.text_area(
-            "Add URLs to documentation:",
-            placeholder="https://example.com/policy\nhttps://docs.company.com/security",
-            height=80,
-            key=f"urls_chat_input_{st.session_state.chat_input_key}",
-            help="Enter URLs to online documentation (one per line)"
-        )
-        
-        if urls_input:
-            urls_list = [url.strip() for url in urls_input.split('\n') if url.strip()]
-            for i, url in enumerate(urls_list[:2]):
-                domain = url.replace('https://', '').replace('http://', '').split('/')[0]
-                attachment_html += f'<span class="attachment-badge url-badge">🔗 {domain}</span>'
-            if len(urls_list) > 2:
-                attachment_html += f'<span class="attachment-badge url-badge">🔗 +{len(urls_list)-2} more</span>'
-    else:
-        urls_input = ""
-    
-    # Show attachment indicators
-    if attachment_html:
-        st.markdown(f'<div class="attachment-indicators">{attachment_html}</div>', unsafe_allow_html=True)
-    
-    # Main input area with controls
-    col1, col2, col3, col4 = st.columns([1, 1, 10, 1])
-    
-    with col1:
-        # Plus button for file upload
-        if st.button("📄", key="file_toggle", help="Attach files", use_container_width=True):
-            st.session_state.show_file_uploader = not st.session_state.get('show_file_uploader', False)
-            st.rerun()
-    
-    with col2:
-        # Link button for URLs
-        if st.button("🔗", key="url_toggle", help="Add URLs", use_container_width=True):
-            st.session_state.show_url_input = not st.session_state.get('show_url_input', False)
-            st.rerun()
-    
-    with col3:
-        # Main text input
-        user_input = st.text_area(
-            "Message",
-            placeholder="Message NIST AI RMF Audit Agent...",
-            height=120,
-            key=f"main_chat_input_{st.session_state.chat_input_key}",
-            label_visibility="collapsed"
-        )
-    
-    with col4:
-        # Send button
-        send_button = st.button("↑", key="send_main", help="Send message", type="primary", use_container_width=True)
-    
-    # Handle send action
-    if send_button and (user_input.strip() or uploaded_files or urls_input.strip()):
-        # Prepare URLs list
-        urls_list = [url.strip() for url in urls_input.split('\n') if url.strip()] if urls_input else []
-        
-        if uploaded_files or urls_list:
-            # Submit as evidence package
-            evidence_package = {
-                'text': user_input,
-                'files': uploaded_files or [],
-                'urls': urls_list
-            }
-            submit_evidence_package(evidence_package)
-        else:
-            # Submit as regular text
-            handle_user_input(user_input)
-        
-        # Clear and refresh input
-        clear_input_state()
-        st.rerun()
-    elif send_button:
-        st.error("Please enter a message or attach files before sending.")
-
-def clear_input_state():
-    """Clear input state and refresh"""
-    st.session_state.chat_input_key += 1
-    st.session_state.show_file_uploader = False
-    st.session_state.show_url_input = False
-
 def render_audit_questions():
-    """Render the audit questions interface with improved chat input"""
+    """Render the audit questions interface with native Streamlit components for reliability"""
     # Show continue button at top if waiting for transition
     if st.session_state.waiting_for_transition:
         st.markdown("### Category Completed!")
@@ -1013,9 +779,161 @@ def render_audit_questions():
         st.markdown("---")
         return
     
-    # Improved chat input interface
+    # Add spacing before input
     st.markdown("---")
-    render_chatgpt_style_input()
+    st.markdown("### Provide Your Response")
+    st.markdown("*You can type your response, upload files, or add URLs to documentation*")
+    
+    # Create tabs for different input methods
+    tab1, tab2, tab3 = st.tabs(["💬 Text Response", "📎 Upload Files", "🔗 Add URLs"])
+    
+    with tab1:
+        # Large text area for user response with dynamic key for clearing
+        text_area_key = f"user_text_input_{st.session_state.get('text_area_counter', 0)}"
+        user_input = st.text_area(
+            "Your Response:",
+            placeholder="Describe your security measures, provide evidence, or ask questions about the audit...",
+            height=150,
+            key=text_area_key,
+            help="Provide your answer or evidence for the current audit question. You can describe policies, procedures, or any relevant information."
+        )
+        
+        
+        
+        # Check for submission
+        submit_pressed = st.button("**Submit Response**", type="primary", use_container_width=True, key="submit_text")
+        
+        # Handle submission
+        if submit_pressed and user_input.strip():
+            # Clear the text area by incrementing counter
+            if 'text_area_counter' not in st.session_state:
+                st.session_state.text_area_counter = 0
+            st.session_state.text_area_counter += 1
+            
+            handle_user_input(user_input.strip())
+            st.rerun()
+        elif submit_pressed:
+            st.warning("Please enter a response before submitting.")
+    
+    with tab2:
+        st.markdown("**Upload Evidence Files**")
+        st.markdown("*Supported formats: PDF, Images (PNG, JPG), Excel (XLSX, XLS), Word (DOCX), Text files*")
+        
+        uploaded_files = st.file_uploader(
+            "Choose files to upload",
+            type=['pdf', 'png', 'jpg', 'jpeg', 'xlsx', 'xls', 'docx', 'txt'],
+            accept_multiple_files=True,
+            key="file_uploader",
+            help="Upload documentation, screenshots, policies, or other evidence files"
+        )
+        
+        # Text input for description when uploading files
+        file_description = st.text_area(
+            "Description (optional):",
+            placeholder="Provide context or description for the uploaded files...",
+            height=100,
+            key=f"file_description_{st.session_state.get('file_desc_counter', 0)}"
+        )
+        
+        if st.button("**Submit Files**", type="primary", use_container_width=True, key="submit_files"):
+            if uploaded_files:
+                with st.spinner("Processing uploaded files..."):
+                    # Clear the description area
+                    if 'file_desc_counter' not in st.session_state:
+                        st.session_state.file_desc_counter = 0
+                    st.session_state.file_desc_counter += 1
+                    
+                    # Process uploaded files
+                    files_data = []
+                    total_size = 0
+                    
+                    for uploaded_file in uploaded_files:
+                        try:
+                            # Read file content
+                            file_content = uploaded_file.read()
+                            file_size = len(file_content)
+                            total_size += file_size
+                            
+                            # Encode to base64
+                            encoded_content = base64.b64encode(file_content).decode('utf-8')
+                            
+                            files_data.append({
+                                'name': uploaded_file.name,
+                                'type': uploaded_file.type,
+                                'size': file_size,
+                                'content': encoded_content
+                            })
+                            
+                            if st.session_state.debug_mode:
+                                st.success(f"✅ Processed: {uploaded_file.name} ({file_size:,} bytes)")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Failed to process {uploaded_file.name}: {str(e)}")
+                            continue
+                    
+                    if files_data:
+                        # Show processing summary
+                        st.info(f"📄 Processed {len(files_data)} file(s) - Total size: {total_size:,} bytes")
+                        
+                        # Create evidence package
+                        evidence_package = {
+                            'text': file_description if file_description.strip() else f"Uploaded {len(files_data)} evidence file(s)",
+                            'files': files_data,
+                            'urls': []
+                        }
+                        
+                        # Submit the evidence package
+                        submit_evidence_package(evidence_package)
+                        st.rerun()
+                    else:
+                        st.error("No files were successfully processed.")
+            else:
+                st.warning("Please upload at least one file before submitting.")
+    
+    with tab3:
+        st.markdown("**Add Documentation URLs**")
+        st.markdown("*Enter URLs to policies, documentation, or compliance resources*")
+        
+        urls_input = st.text_area(
+            "URLs (one per line):",
+            placeholder="https://example.com/privacy-policy\nhttps://docs.company.com/ai-security\nhttps://confluence.company.com/governance",
+            height=120,
+            key=f"urls_input_{st.session_state.get('url_input_counter', 0)}",
+            help="Provide URLs to external documentation, policies, or resources relevant to the audit question"
+        )
+        
+        # Text input for description when adding URLs
+        url_description = st.text_area(
+            "Description (optional):",
+            placeholder="Provide context or description for the URLs...",
+            height=80,
+            key=f"url_description_{st.session_state.get('url_desc_counter', 0)}"
+        )
+        
+        if st.button("**Submit URLs**", type="primary", use_container_width=True, key="submit_urls"):
+            if urls_input.strip():
+                urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
+                if urls:
+                    # Clear the input areas
+                    if 'url_input_counter' not in st.session_state:
+                        st.session_state.url_input_counter = 0
+                    if 'url_desc_counter' not in st.session_state:
+                        st.session_state.url_desc_counter = 0
+                    st.session_state.url_input_counter += 1
+                    st.session_state.url_desc_counter += 1
+                    
+                    # Create evidence package
+                    evidence_package = {
+                        'text': url_description,
+                        'files': [],
+                        'urls': urls
+                    }
+                    submit_evidence_package(evidence_package)
+                    st.rerun()
+                else:
+                    st.warning("Please enter valid URLs before submitting.")
+            else:
+                st.warning("Please enter at least one URL before submitting.")
 
 def handle_user_input(prompt: str):
     """Handle user input during audit"""
@@ -1070,20 +988,26 @@ def render_completed_state():
 def submit_evidence_package(evidence_package):
     """Process and submit the evidence package"""
     with st.spinner("Processing evidence package..."):
-        # Convert files to base64 for API transmission
-        files_data = []
-        if evidence_package.get('files'):
-            for file in evidence_package['files']:
-                if file is not None:
-                    file_content = file.read()
-                    file_data = {
-                        'name': file.name,
-                        'type': file.type,
-                        'size': file.size,
-                        'content': base64.b64encode(file_content).decode('utf-8')
-                    }
-                    files_data.append(file_data)
-                    file.seek(0)  # Reset file pointer
+        files_data = evidence_package.get('files', [])
+        urls = evidence_package.get('urls', [])
+        text_desc = evidence_package.get('text', '')
+        
+        # Debug logging
+        if st.session_state.debug_mode:
+            st.write(f"Debug: Submitting evidence package with {len(files_data)} files and {len(urls)} URLs")
+            if text_desc:
+                st.write(f"Debug: Text description length: {len(text_desc)}")
+        
+        # Create the evidence package payload in the correct format expected by the backend
+        evidence_package_json = {
+            "text": text_desc,
+            "files": files_data,
+            "urls": urls
+        }
+        
+        # Encode the evidence package as JSON string for the backend
+        import json
+        evidence_package_encoded = f"EVIDENCE_PACKAGE:{json.dumps(evidence_package_json)}"
         
         # Prepare payload for API
         payload = {
@@ -1091,14 +1015,7 @@ def submit_evidence_package(evidence_package):
             "userId": "clyde",
             "sessionId": "web_session",
             "newMessage": {
-                "parts": [{
-                    "text": "EVIDENCE_PACKAGE",
-                    "evidence_package": {
-                        "text": evidence_package.get('text', ''),
-                        "files": files_data,
-                        "urls": evidence_package.get('urls', [])
-                    }
-                }],
+                "parts": [{"text": evidence_package_encoded}],
                 "role": "user"
             }
         }
@@ -1107,17 +1024,23 @@ def submit_evidence_package(evidence_package):
         
         if "error" not in response and response.get("success"):
             # Show what was submitted
-            submitted_text = f"Evidence submitted"
+            submitted_parts = []
+            if text_desc:
+                submitted_parts.append(f"description: {text_desc[:50]}...")
             if files_data:
-                submitted_text += f" with {len(files_data)} file(s)"
-            if evidence_package.get('urls'):
-                submitted_text += f" and {len(evidence_package.get('urls'))} URL(s)"
+                submitted_parts.append(f"{len(files_data)} file(s)")
+            if urls:
+                submitted_parts.append(f"{len(urls)} URL(s)")
+            
+            submitted_text = f"Evidence package submitted with {', '.join(submitted_parts)}"
             
             add_message("user", submitted_text)
             add_message("assistant", response.get("content", "Evidence processed successfully."), parsed=True)
         else:
             error_msg = response.get('error', 'Unknown error')
             st.error(f"**Failed to process evidence:** {error_msg}")
+            if st.session_state.debug_mode:
+                st.write(f"Debug: Full error response: {response}")
 
 def main():
     """Main application function"""
@@ -1173,3 +1096,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

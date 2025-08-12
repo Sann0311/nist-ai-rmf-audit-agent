@@ -1,3 +1,4 @@
+
 # agent.py
 try:
     from google.adk.agents import LlmAgent  
@@ -11,36 +12,49 @@ except ImportError as e:
     LiteLlm = None
     types = None
 
-# Import our tool functions
+# Import our tool functions - FIXED IMPORTS
 try:
     from .tool import (
-        run_tool,
+        audit_tool,
         get_capabilities,
         start_audit_session,
         process_chat_message,
         get_nist_categories,
     )
+    print("✅ Successfully imported tool functions from .tool")
 except ImportError:
-    # Define dummy functions if tools are not available
-    def run_tool(*args, **kwargs):
-        return {}
-    def get_capabilities(*args, **kwargs):
-        return {}
-    def start_audit_session(*args, **kwargs):
-        return {}
-    def process_chat_message(*args, **kwargs):
-        return {}
-    def get_nist_categories(*args, **kwargs):
-        return [
-            "Privacy-Enhanced",
-            "Valid & Reliable", 
-            "Safe",
-            "Secure & Resilient",
-            "Accountable & Transparent",
-            "Explainable and Interpretable",
-            "Fair – With Harmful Bias Managed"
-        ]
-
+    try:
+        # Try direct import if relative import fails
+        from tool import (
+            audit_tool,
+            get_capabilities,
+            start_audit_session,
+            process_chat_message,
+            get_nist_categories,
+        )
+        print("✅ Successfully imported tool functions from tool")
+    except ImportError as e:
+        print(f"❌ Failed to import tool functions: {e}")
+        # Define dummy functions if tools are not available
+        def audit_tool(*args, **kwargs):
+            print(f"DUMMY audit_tool called with args={args}, kwargs={kwargs}")
+            return {"error": "Tool functions not available"}
+        def get_capabilities(*args, **kwargs):
+            return {}
+        def start_audit_session(*args, **kwargs):
+            return {}
+        def process_chat_message(*args, **kwargs):
+            return {}
+        def get_nist_categories(*args, **kwargs):
+            return [
+                "Privacy-Enhanced",
+                "Valid & Reliable", 
+                "Safe",
+                "Secure & Resilient",
+                "Accountable & Transparent",
+                "Explainable and Interpretable",
+                "Fair – With Harmful Bias Managed"
+            ]
 
 def _get_help():
     """Returns the help message for the agent."""
@@ -51,38 +65,6 @@ def _get_help():
                    "\n\nWhich category would you like to audit?"
     }
 
-
-# Create the audit tool function for the agent
-def audit_tool(message: str = "", category: str = "", **kwargs):
-    """NIST AI RMF Audit Tool for conducting structured security assessments with AI-powered assessment generation."""
-    print(f"DEBUG audit_tool: message='{message}', category='{category}', kwargs={kwargs}")
-   
-    # If no message, show help
-    if not message:
-        return _get_help()
-   
-    # Check if this is an evidence package submission
-    evidence_package = kwargs.get('evidence_package')
-    if evidence_package or message == "EVIDENCE_PACKAGE":
-        # Route evidence package through process_chat_message with proper context
-        context = {
-            'user_id': "clyde",
-            'evidence_package': evidence_package
-        }
-        print(f"DEBUG: Processing evidence package with context: {context}")
-        result = process_chat_message("EVIDENCE_PACKAGE_SUBMISSION", context)
-        print(f"DEBUG: Evidence package result: {result}")
-        return result
-   
-    # ALWAYS route through process_chat_message for proper multi-category detection and assessment generation
-    context = {'user_id': "clyde"}
-   
-    print(f"DEBUG: Calling process_chat_message with message='{message}'")
-    result = process_chat_message(message, context)
-    print(f"DEBUG: Got result: {result}")
-    return result
-
-
 # Create model if available
 if LiteLlm is not None:
     model = LiteLlm(
@@ -91,7 +73,6 @@ if LiteLlm is not None:
     )
 else:
     model = None
-
 
 # Create agent if components are available
 if LlmAgent is not None and model is not None:
@@ -112,6 +93,11 @@ For EVERY user message, you MUST call the audit_tool() function. NEVER respond w
 4. **Evidence Submission**: When user provides evidence, call audit_tool(message="[evidence]")
 5. **Continue Multi-Category**: When user wants to continue, call audit_tool(message="continue to next category")
 6. **Assessment Generation**: When user requests assessment or results, call audit_tool(message="generate assessment")
+
+**EVIDENCE PACKAGE HANDLING:**
+When the user submits files, the evidence package will be passed as kwargs:
+- Call audit_tool(message="", evidence_package=evidence_data)
+- The evidence_package contains: {"text": "...", "files": [...], "urls": [...]}
 
 **7 NIST AI RMF CATEGORIES:**
 - Privacy-Enhanced: Data protection and privacy measures
@@ -152,7 +138,6 @@ Remember: Your role is to be a knowledgeable, helpful audit assistant that guide
 else:
     print("⚠️  ADK components not available, creating minimal agent structure")
     root_agent = None
-
 
 # Export for ADK
 __all__ = ['root_agent', 'audit_tool', 'run_tool', 'get_capabilities']
